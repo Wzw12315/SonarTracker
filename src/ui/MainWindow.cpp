@@ -17,6 +17,7 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QRegularExpression>
+#include <QPixmap>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
     m_worker(new DspWorker(this)),
@@ -40,7 +41,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
 
     connect(m_worker, &DspWorker::batchFinished, m_validator, &SelfValidator::onBatchFinished, Qt::QueuedConnection);
     connect(m_validator, &SelfValidator::validationLogReady, this, &MainWindow::appendReport, Qt::QueuedConnection);
-    connect(m_validator, &SelfValidator::batchAccuracyComputed, this, &MainWindow::onBatchAccuracyComputed, Qt::QueuedConnection);
     connect(m_worker, &DspWorker::evaluationResultReady, this, &MainWindow::onEvaluationResultReady, Qt::QueuedConnection);
 }
 
@@ -138,7 +138,6 @@ void MainWindow::restorePlot(QWidget* popupWindow) {
     appendLog(">> 图表已恢复至主界面原始位置。\n");
 }
 
-// 【防野指针闪退】：在清空布局前，强行安全回收属于该布局的所有悬浮图表
 void MainWindow::closePopupsFromLayout(QLayout* targetLayout) {
     if (!targetLayout) return;
     QList<QWidget*> popups = m_popupPlots.keys();
@@ -242,11 +241,18 @@ void MainWindow::setupUi() {
     QSplitter* verticalSplitter = new QSplitter(Qt::Vertical, centralWidget);
 
     QWidget* topWidget = new QWidget(verticalSplitter);
-    QHBoxLayout* topLayout = new QHBoxLayout(topWidget);
+    QVBoxLayout* topLayout = new QVBoxLayout(topWidget);
     topLayout->setContentsMargins(0, 0, 0, 0);
 
-    QWidget* leftPanel = new QWidget(topWidget);
-    leftPanel->setFixedWidth(350);
+    QSplitter* topMainSplitter = new QSplitter(Qt::Horizontal, topWidget);
+    topLayout->addWidget(topMainSplitter);
+
+    // ==========================================
+    // 左侧：参数与控制面板
+    // ==========================================
+    QWidget* leftPanel = new QWidget(topMainSplitter);
+    leftPanel->setMinimumWidth(250);
+    leftPanel->setMaximumWidth(600);
     QVBoxLayout* leftLayout = new QVBoxLayout(leftPanel);
     leftLayout->setContentsMargins(0,0,0,0);
 
@@ -338,14 +344,30 @@ void MainWindow::setupUi() {
 
     paramScroll->setWidget(paramContainer);
     leftLayout->addWidget(paramScroll, 2);
+    topMainSplitter->addWidget(leftPanel);
 
-    topLayout->addWidget(leftPanel);
+    // ==========================================
+    // 中间：主图表展示区
+    // ==========================================
+    m_mainTabWidget = new QTabWidget(topMainSplitter);
+    topMainSplitter->addWidget(m_mainTabWidget);
 
-    m_mainTabWidget = new QTabWidget(topWidget);
-    topLayout->addWidget(m_mainTabWidget, 1);
+    QPushButton* toggleLeftBtn = new QPushButton("◀ 隐藏控制栏", m_mainTabWidget);
+    toggleLeftBtn->setCheckable(true);
+    toggleLeftBtn->setCursor(Qt::PointingHandCursor);
+    toggleLeftBtn->setStyleSheet("QPushButton { border: none; padding: 4px 10px; color: #2c3e50; font-weight: bold; } QPushButton:hover { color: #2980b9; }");
+    connect(toggleLeftBtn, &QPushButton::toggled, this, [leftPanel, toggleLeftBtn](bool checked){
+        leftPanel->setVisible(!checked);
+        toggleLeftBtn->setText(checked ? "▶ 展开控制栏" : "◀ 隐藏控制栏");
+    });
+    m_mainTabWidget->setCornerWidget(toggleLeftBtn, Qt::TopLeftCorner);
 
-    QWidget* rightSidePanel = new QWidget(topWidget);
-    rightSidePanel->setFixedWidth(330);
+    // ==========================================
+    // 右侧：系统状态与终端面板
+    // ==========================================
+    QWidget* rightSidePanel = new QWidget(topMainSplitter);
+    rightSidePanel->setMinimumWidth(250);
+    rightSidePanel->setMaximumWidth(600);
     QVBoxLayout* rightSideLayout = new QVBoxLayout(rightSidePanel);
     rightSideLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -361,8 +383,14 @@ void MainWindow::setupUi() {
     logLayout->addWidget(m_logConsole);
 
     rightSideLayout->addWidget(groupLog);
-    topLayout->addWidget(rightSidePanel);
+    topMainSplitter->addWidget(rightSidePanel);
 
+    topMainSplitter->setStretchFactor(0, 0);
+    topMainSplitter->setStretchFactor(1, 1);
+    topMainSplitter->setStretchFactor(2, 0);
+    topMainSplitter->setSizes(QList<int>() << 330 << 940 << 330);
+
+    // ================== TAB 1 ==================
     QWidget* tab1 = new QWidget();
     QHBoxLayout* tab1Layout = new QHBoxLayout(tab1);
     QSplitter* horizontalSplitter = new QSplitter(Qt::Horizontal, tab1);
@@ -370,6 +398,7 @@ void MainWindow::setupUi() {
     QWidget* midPanel = new QWidget(horizontalSplitter);
     QVBoxLayout* midLayout = new QVBoxLayout(midPanel);
     m_timeAzimuthPlot = new QCustomPlot(midPanel);
+    m_timeAzimuthPlot->setMinimumSize(300, 200);
     setupPlotInteraction(m_timeAzimuthPlot);
     m_timeAzimuthPlot->addGraph();
     m_timeAzimuthPlot->graph(0)->setLineStyle(QCPGraph::lsNone);
@@ -385,8 +414,9 @@ void MainWindow::setupUi() {
     QVBoxLayout* rightLayout = new QVBoxLayout(rightPanel);
 
     m_spatialPlot = new QCustomPlot(rightPanel);
+    m_spatialPlot->setMinimumSize(300, 250);
+    m_spatialPlot->setMaximumHeight(350);
     setupPlotInteraction(m_spatialPlot);
-    m_spatialPlot->setMinimumHeight(250); m_spatialPlot->setMaximumHeight(350);
     m_spatialPlot->addGraph(); m_spatialPlot->graph(0)->setName("CBF (常规波束)"); m_spatialPlot->graph(0)->setPen(QPen(Qt::gray, 2, Qt::DashLine));
     m_spatialPlot->addGraph(); m_spatialPlot->graph(1)->setName("DCV (高分辨)"); m_spatialPlot->graph(1)->setPen(QPen(Qt::blue, 2));
     m_spatialPlot->plotLayout()->insertRow(0);
@@ -411,6 +441,7 @@ void MainWindow::setupUi() {
     tab1Layout->addWidget(horizontalSplitter);
     m_mainTabWidget->addTab(tab1, "💻 实时探测与关联");
 
+    // ================== TAB 2 ==================
     QWidget* tab2 = new QWidget();
     QVBoxLayout* tab2MainLayout = new QVBoxLayout(tab2);
     QScrollArea* tab2Scroll = new QScrollArea(tab2);
@@ -418,23 +449,28 @@ void MainWindow::setupUi() {
     tab2Scroll->setFrameShape(QFrame::NoFrame);
     QWidget* tab2Container = new QWidget(tab2Scroll);
     QVBoxLayout* tab2ContainerLayout = new QVBoxLayout(tab2Container);
-    QHBoxLayout* waterfallsLayout = new QHBoxLayout();
 
-    m_cbfWaterfallPlot = new QCustomPlot(tab2Container);
+    QSplitter* waterfallsSplitter = new QSplitter(Qt::Horizontal, tab2Container);
+
+    m_cbfWaterfallPlot = new QCustomPlot(waterfallsSplitter);
+    m_cbfWaterfallPlot->setMinimumSize(300, 400);
     setupPlotInteraction(m_cbfWaterfallPlot);
-    m_cbfWaterfallPlot->setMinimumHeight(400);
     m_cbfWaterfallPlot->plotLayout()->insertRow(0);
     m_cbfWaterfallPlot->plotLayout()->addElement(0, 0, new QCPTextElement(m_cbfWaterfallPlot, "常规波束形成(CBF) 空间谱历程", QFont("sans", 12, QFont::Bold)));
-    waterfallsLayout->addWidget(m_cbfWaterfallPlot);
+    waterfallsSplitter->addWidget(m_cbfWaterfallPlot);
 
-    m_dcvWaterfallPlot = new QCustomPlot(tab2Container);
+    m_dcvWaterfallPlot = new QCustomPlot(waterfallsSplitter);
+    m_dcvWaterfallPlot->setMinimumSize(300, 400);
     setupPlotInteraction(m_dcvWaterfallPlot);
-    m_dcvWaterfallPlot->setMinimumHeight(400);
     m_dcvWaterfallPlot->plotLayout()->insertRow(0);
     m_dcvWaterfallPlot->plotLayout()->addElement(0, 0, new QCPTextElement(m_dcvWaterfallPlot, "高分辨反卷积(DCV) 全方位时空谱历程", QFont("sans", 12, QFont::Bold)));
-    waterfallsLayout->addWidget(m_dcvWaterfallPlot);
+    waterfallsSplitter->addWidget(m_dcvWaterfallPlot);
 
-    tab2ContainerLayout->addLayout(waterfallsLayout);
+    waterfallsSplitter->setStretchFactor(0, 1);
+    waterfallsSplitter->setStretchFactor(1, 1);
+    waterfallsSplitter->setSizes(QList<int>() << 1000 << 1000);
+
+    tab2ContainerLayout->addWidget(waterfallsSplitter);
 
     m_sliceWidget = new QWidget(tab2Container);
     m_sliceLayout = new QGridLayout(m_sliceWidget);
@@ -445,6 +481,7 @@ void MainWindow::setupUi() {
     tab2MainLayout->addWidget(tab2Scroll);
     m_mainTabWidget->addTab(tab2, "📊 后处理: 空间方位谱全景与切片");
 
+    // ================== TAB 3 ==================
     QWidget* tab3 = new QWidget();
     QVBoxLayout* tab3Layout = new QVBoxLayout(tab3);
     QScrollArea* lofarScroll = new QScrollArea(tab3);
@@ -456,22 +493,28 @@ void MainWindow::setupUi() {
     tab3Layout->addWidget(lofarScroll);
     m_mainTabWidget->addTab(tab3, "📉 后处理: 深度解耦与DP特征提取");
 
+    // ================== TAB 4 (全新品字形结构) ==================
     QWidget* tab4 = new QWidget();
     QVBoxLayout* tab4Layout = new QVBoxLayout(tab4);
     tab4->setStyleSheet("QWidget { background-color: #f4f6f9; }");
 
-    QHBoxLayout* cardsLayout = new QHBoxLayout();
+    // 1. 顶部三张卡片 (独立，不参与拖拽缩放，保持固定高度)
+    QWidget* cardsWidget = new QWidget(tab4);
+    QHBoxLayout* cardsLayout = new QHBoxLayout(cardsWidget);
+    cardsLayout->setContentsMargins(0, 0, 0, 0);
     m_lblStatTime = new QLabel("--");
     m_lblStatTargets = new QLabel("--");
     m_lblStatAvgAcc = new QLabel("--");
     cardsLayout->addWidget(createCardWidget(m_lblStatTime, "#ffffff", "⌛ 系统全流程解算耗时分布"));
     cardsLayout->addWidget(createCardWidget(m_lblStatTargets, "#ffffff", "🎯 稳定识别/锁定目标总数"));
     cardsLayout->addWidget(createCardWidget(m_lblStatAvgAcc, "#ffffff", "✅ 全局平均线谱提取正确率"));
-    tab4Layout->addLayout(cardsLayout, 1);
+    tab4Layout->addWidget(cardsWidget);
 
-    QSplitter* tab4MiddleSplitter = new QSplitter(Qt::Horizontal);
+    // 2. 下方内容主体：品字形垂直分割器
+    QSplitter* tab4ContentSplitter = new QSplitter(Qt::Vertical, tab4);
 
-    m_tableTargetFeatures = new QTableWidget();
+    // 【品字形上部】：表格
+    m_tableTargetFeatures = new QTableWidget(tab4ContentSplitter);
     m_tableTargetFeatures->setColumnCount(7);
     m_tableTargetFeatures->setHorizontalHeaderLabels({"目标 ID", "聚类线谱特征群", "线谱正确率", "稳定中心轴频", "真实类别", "系统判别", "判别结果"});
     m_tableTargetFeatures->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
@@ -486,9 +529,13 @@ void MainWindow::setupUi() {
     m_tableTargetFeatures->setAlternatingRowColors(true);
     m_tableTargetFeatures->setStyleSheet("QTableWidget { background-color: white; border-radius: 8px; }"
                                          "QHeaderView::section { background-color: #0078d7; color: white; font-weight: bold; border: none; padding: 6px; }");
-    tab4MiddleSplitter->addWidget(m_tableTargetFeatures);
+    tab4ContentSplitter->addWidget(m_tableTargetFeatures);
 
-    m_plotTargetAccuracy = new QCustomPlot();
+    // 【品字形下部】：两个图表，使用水平分割器并排
+    QSplitter* bottomPlotsSplitter = new QSplitter(Qt::Horizontal, tab4ContentSplitter);
+
+    m_plotTargetAccuracy = new QCustomPlot(bottomPlotsSplitter);
+    m_plotTargetAccuracy->setMinimumSize(300, 200);
     m_plotTargetAccuracy->setStyleSheet("background-color: white; border-radius: 8px;");
     m_plotTargetAccuracy->plotLayout()->insertRow(0);
     m_plotTargetAccuracy->plotLayout()->addElement(0, 0, new QCPTextElement(m_plotTargetAccuracy, "各独立目标特征提取正确率", QFont("sans", 12, QFont::Bold)));
@@ -499,26 +546,40 @@ void MainWindow::setupUi() {
     m_plotTargetAccuracy->yAxis->setLabel("正确率 (%)");
     m_plotTargetAccuracy->yAxis->setRange(0, 105);
     setupPlotInteraction(m_plotTargetAccuracy);
-    tab4MiddleSplitter->addWidget(m_plotTargetAccuracy);
-    tab4MiddleSplitter->setStretchFactor(0, 4);
-    tab4MiddleSplitter->setStretchFactor(1, 2);
-    tab4Layout->addWidget(tab4MiddleSplitter, 3);
+    bottomPlotsSplitter->addWidget(m_plotTargetAccuracy);
 
-    m_plotBatchAccuracy = new QCustomPlot();
+    m_plotBatchAccuracy = new QCustomPlot(bottomPlotsSplitter);
+    m_plotBatchAccuracy->setMinimumSize(300, 200);
     m_plotBatchAccuracy->setStyleSheet("background-color: white; border-radius: 8px;");
     m_plotBatchAccuracy->plotLayout()->insertRow(0);
     m_plotBatchAccuracy->plotLayout()->addElement(0, 0, new QCPTextElement(m_plotBatchAccuracy, "连续监测周期(批次)综合正确率走势", QFont("sans", 12, QFont::Bold)));
-    m_plotBatchAccuracy->addGraph();
+    m_plotBatchAccuracy->addGraph(); // 初始化走势折线
     m_plotBatchAccuracy->graph(0)->setPen(QPen(QColor(46, 204, 113), 3));
     m_plotBatchAccuracy->graph(0)->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssCircle, QColor(46, 204, 113), Qt::white, 8));
     m_plotBatchAccuracy->xAxis->setLabel("运算监测批次");
     m_plotBatchAccuracy->yAxis->setLabel("批次综合正确率 (%)");
     m_plotBatchAccuracy->yAxis->setRange(0, 105);
     setupPlotInteraction(m_plotBatchAccuracy);
-    tab4Layout->addWidget(m_plotBatchAccuracy, 2);
+    bottomPlotsSplitter->addWidget(m_plotBatchAccuracy);
 
+    // 均分品字形底部的两个图表
+    bottomPlotsSplitter->setStretchFactor(0, 1);
+    bottomPlotsSplitter->setStretchFactor(1, 1);
+    bottomPlotsSplitter->setSizes(QList<int>() << 1000 << 1000);
+
+    tab4ContentSplitter->addWidget(bottomPlotsSplitter);
+
+    // 均分品字形上下空间 (表格50%，图表区域50%)
+    tab4ContentSplitter->setStretchFactor(0, 1);
+    tab4ContentSplitter->setStretchFactor(1, 1);
+    tab4ContentSplitter->setSizes(QList<int>() << 1000 << 1000);
+
+    tab4Layout->addWidget(tab4ContentSplitter);
     m_mainTabWidget->addTab(tab4, "📈 系统效能与指标验收评估");
 
+    // ==========================================
+    // 底部：评估报告终端
+    // ==========================================
     verticalSplitter->addWidget(topWidget);
 
     QGroupBox* groupReport = new QGroupBox("综合处理评估报告终端", verticalSplitter);
@@ -531,6 +592,33 @@ void MainWindow::setupUi() {
     verticalSplitter->addWidget(groupReport);
     verticalSplitter->setStretchFactor(0, 4);
     verticalSplitter->setStretchFactor(1, 1);
+
+    QWidget* cornerWidget = new QWidget(m_mainTabWidget);
+    QHBoxLayout* cornerLayout = new QHBoxLayout(cornerWidget);
+    cornerLayout->setContentsMargins(0, 0, 0, 0);
+    cornerLayout->setSpacing(8);
+
+    QPushButton* toggleBottomBtn = new QPushButton("▼ 隐藏报告栏", cornerWidget);
+    toggleBottomBtn->setCheckable(true);
+    toggleBottomBtn->setCursor(Qt::PointingHandCursor);
+    toggleBottomBtn->setStyleSheet("QPushButton { border: none; padding: 4px 10px; color: #2c3e50; font-weight: bold; } QPushButton:hover { color: #2980b9; }");
+    connect(toggleBottomBtn, &QPushButton::toggled, this, [groupReport, toggleBottomBtn](bool checked){
+        groupReport->setVisible(!checked);
+        toggleBottomBtn->setText(checked ? "▲ 展开报告栏" : "▼ 隐藏报告栏");
+    });
+
+    QPushButton* toggleRightBtn = new QPushButton("隐藏终端栏 ▶", cornerWidget);
+    toggleRightBtn->setCheckable(true);
+    toggleRightBtn->setCursor(Qt::PointingHandCursor);
+    toggleRightBtn->setStyleSheet("QPushButton { border: none; padding: 4px 10px; color: #2c3e50; font-weight: bold; } QPushButton:hover { color: #2980b9; }");
+    connect(toggleRightBtn, &QPushButton::toggled, this, [rightSidePanel, toggleRightBtn](bool checked){
+        rightSidePanel->setVisible(!checked);
+        toggleRightBtn->setText(checked ? "◀ 展开终端栏" : "隐藏终端栏 ▶");
+    });
+
+    cornerLayout->addWidget(toggleBottomBtn);
+    cornerLayout->addWidget(toggleRightBtn);
+    m_mainTabWidget->setCornerWidget(cornerWidget, Qt::TopRightCorner);
 
     mainVLayout->addWidget(verticalSplitter);
 
@@ -597,7 +685,12 @@ void MainWindow::onStartClicked() {
     m_historyResults.clear();
     m_batchAccuracies.clear();
     m_targetClasses.clear();
+
+    // 【修复】每次启动时，清空之前缓存的方位图和批次走势图
     m_timeAzimuthPlot->graph(0)->data()->clear();
+    m_plotBatchAccuracy->graph(0)->data()->clear();
+    m_plotBatchAccuracy->replot();
+
     m_reportConsole->clear();
     m_logConsole->clear();
 
@@ -629,7 +722,6 @@ void MainWindow::onStartClicked() {
     m_worker->setConfig(m_currentConfig);
     m_worker->start();
 }
-
 void MainWindow::onPauseResumeClicked() {
     if (m_worker->isRunning()) {
         if (m_worker->isPaused()) {
@@ -738,11 +830,31 @@ void MainWindow::onExportClicked() {
     savePlot(m_plotTargetAccuracy, "Dashboard_Target_Accuracy");
     savePlot(m_plotBatchAccuracy, "Dashboard_Batch_Trend");
 
+    if (m_tableTargetFeatures) {
+        m_tableTargetFeatures->grab().save(plotsDirPath + "/Dashboard_1_Table.png");
+    }
+    if (m_lblStatTime && m_lblStatTime->parentWidget()) {
+        m_lblStatTime->parentWidget()->grab().save(plotsDirPath + "/Dashboard_2_Card_Time.png");
+    }
+    if (m_lblStatTargets && m_lblStatTargets->parentWidget()) {
+        m_lblStatTargets->parentWidget()->grab().save(plotsDirPath + "/Dashboard_3_Card_Targets.png");
+    }
+    if (m_lblStatAvgAcc && m_lblStatAvgAcc->parentWidget()) {
+        m_lblStatAvgAcc->parentWidget()->grab().save(plotsDirPath + "/Dashboard_4_Card_AvgAccuracy.png");
+    }
+
+    if (m_mainTabWidget && m_mainTabWidget->count() >= 4) {
+        QWidget* tab4 = m_mainTabWidget->widget(3);
+        if (tab4) {
+            tab4->grab().save(plotsDirPath + "/Dashboard_Full_Panel.png");
+        }
+    }
+
     appendLog(QString("\n>> 成功：分析报表已完整导出至 %1\n").arg(fileName));
     appendLog(QString(">> 成功：所有配套图表已导出至文件夹 %1\n").arg(plotsDirPath));
 
     QMessageBox::information(this, "导出成功",
-                             QString("综合评估报表及运行日志已成功导出！\n\n此外，当前所有图表也已自动保存为PNG图片，位于同级配套目录：\n%1").arg(plotsDirPath));
+                             QString("综合评估报表及运行日志已成功导出！\n\n此外，当前所有图表及面板也已自动保存为图片，位于同级配套目录：\n%1").arg(plotsDirPath));
 }
 
 void MainWindow::createTargetPlots(int targetId) {
@@ -927,7 +1039,8 @@ void MainWindow::onOfflineResultsReady(const QList<OfflineTargetResult>& results
         QCustomPlot* pTpsw = new QCustomPlot(m_lofarWaterfallWidget);
         setupPlotInteraction(pTpsw);
         pTpsw->setMinimumSize(400, 250); m_lofarWaterfallLayout->addWidget(pTpsw, 1, col);
-        pTpsw->plotLayout()->insertRow(0); pTpsw->plotLayout()->addElement(0, 0, new QCPTextElement(pTpsw, "历史LOFAR谱 (TPSW背景均衡)", QFont("sans", 10, QFont::Bold)));
+        pTpsw->plotLayout()->insertRow(0);
+        pTpsw->plotLayout()->addElement(0, 0, new QCPTextElement(pTpsw, QString("目标%1 历史LOFAR谱 (TPSW背景均衡)").arg(res.targetId), QFont("sans", 10, QFont::Bold)));
         QCPColorMap *cmapTpsw = new QCPColorMap(pTpsw->xAxis, pTpsw->yAxis);
         cmapTpsw->data()->setSize(res.freqBins, res.timeFrames); cmapTpsw->data()->setRange(QCPRange(0, m_currentConfig.fs/2.0), QCPRange(res.minTime, res.maxTime));
         double tmax = -999; for(double v : res.tpswLofarDb) if(v > tmax) tmax = v;
@@ -941,7 +1054,8 @@ void MainWindow::onOfflineResultsReady(const QList<OfflineTargetResult>& results
         QCustomPlot* pDp = new QCustomPlot(m_lofarWaterfallWidget);
         setupPlotInteraction(pDp);
         pDp->setMinimumSize(400, 250); m_lofarWaterfallLayout->addWidget(pDp, 2, col);
-        pDp->plotLayout()->insertRow(0); pDp->plotLayout()->addElement(0, 0, new QCPTextElement(pDp, "专属线谱连续轨迹图 (DP寻优)", QFont("sans", 10, QFont::Bold)));
+        pDp->plotLayout()->insertRow(0);
+        pDp->plotLayout()->addElement(0, 0, new QCPTextElement(pDp, QString("目标%1 专属线谱连续轨迹图 (DP寻优)").arg(res.targetId), QFont("sans", 10, QFont::Bold)));
         QCPColorMap *cmapDp = new QCPColorMap(pDp->xAxis, pDp->yAxis);
         cmapDp->data()->setSize(res.freqBins, res.timeFrames); cmapDp->data()->setRange(QCPRange(0, m_currentConfig.fs/2.0), QCPRange(res.minTime, res.maxTime));
         for(int t=0; t<res.timeFrames; ++t) for(int f=0; f<res.freqBins; ++f) cmapDp->data()->setCell(f, t, res.dpCounter[t * res.freqBins + f]);
@@ -1092,8 +1206,6 @@ void MainWindow::updateTab2Plots() {
             double max_cbf = *std::max_element(v_cbf.begin(), v_cbf.end());
             double max_dcv = *std::max_element(v_dcv.begin(), v_dcv.end());
 
-            double target_suppression_ratio = 26.5;
-
             QVector<double> f_axis(v_dcv.size());
             QVector<double> cbf_db(v_cbf.size());
             QVector<double> dcv_db(v_dcv.size());
@@ -1102,20 +1214,22 @@ void MainWindow::updateTab2Plots() {
             for(int i=0; i<v_dcv.size(); ++i) {
                 f_axis[i] = i * df_calc;
 
+                // 【修复】：移除了原来对 CBF 附加的 target_suppression_ratio 惩罚系数，还原其真实分贝值
                 double d_val = 10.0 * std::log10(v_dcv[i] / (max_dcv + 1e-12) + 1e-12);
-                double c_val = 10.0 * std::log10(v_cbf[i] / (max_cbf + 1e-12) + 1e-12) - target_suppression_ratio;
+                double c_val = 10.0 * std::log10(v_cbf[i] / (max_cbf + 1e-12) + 1e-12);
 
                 dcv_db[i] = std::max(-80.0, d_val);
                 cbf_db[i] = std::max(-80.0, c_val);
             }
 
+            // 绘制 CBF
             QCustomPlot* pCbf = new QCustomPlot(m_sliceWidget);
             setupPlotInteraction(pCbf);
             pCbf->setMinimumSize(400, 250);
             pCbf->addGraph(); pCbf->graph(0)->setPen(QPen(Qt::gray, 2.0));
             pCbf->graph(0)->setData(f_axis, cbf_db);
             pCbf->plotLayout()->insertRow(0);
-            pCbf->plotLayout()->addElement(0, 0, new QCPTextElement(pCbf, QString("目标%1 (约 %2°) - CBF (受扰)").arg(tid).arg(avg_ang, 0, 'f', 1), QFont("sans", 10, QFont::Bold)));
+            pCbf->plotLayout()->addElement(0, 0, new QCPTextElement(pCbf, QString("目标%1 (约 %2°) - CBF").arg(tid).arg(avg_ang, 0, 'f', 1), QFont("sans", 10, QFont::Bold)));
             pCbf->xAxis->setRange(m_currentConfig.lofarMin, m_currentConfig.lofarMax);
             pCbf->yAxis->setRange(-80, 5);
             if (col == 0) pCbf->yAxis->setLabel("相对功率 / dB");
@@ -1123,13 +1237,14 @@ void MainWindow::updateTab2Plots() {
             m_sliceLayout->addWidget(pCbf, 0, col);
             updatePlotOriginalRange(pCbf);
 
+            // 绘制 DCV
             QCustomPlot* pDcv = new QCustomPlot(m_sliceWidget);
             setupPlotInteraction(pDcv);
             pDcv->setMinimumSize(400, 250);
             pDcv->addGraph(); pDcv->graph(0)->setPen(QPen(Qt::red, 1.5));
             pDcv->graph(0)->setData(f_axis, dcv_db);
             pDcv->plotLayout()->insertRow(0);
-            pDcv->plotLayout()->addElement(0, 0, new QCPTextElement(pDcv, QString("目标%1 (约 %2°) - DCV (抑制后)").arg(tid).arg(avg_ang, 0, 'f', 1), QFont("sans", 10, QFont::Bold)));
+            pDcv->plotLayout()->addElement(0, 0, new QCPTextElement(pDcv, QString("目标%1 (约 %2°) - DCV").arg(tid).arg(avg_ang, 0, 'f', 1), QFont("sans", 10, QFont::Bold)));
             pDcv->xAxis->setRange(m_currentConfig.lofarMin, m_currentConfig.lofarMax);
             pDcv->yAxis->setRange(-80, 5);
             pDcv->xAxis->setLabel("频率 / Hz");
@@ -1141,7 +1256,6 @@ void MainWindow::updateTab2Plots() {
         }
     }
 }
-
 void MainWindow::onProcessingFinished() {
     m_lblSysInfo->setText(QString("状态: 分析完成\n结束时间: %1").arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
     m_btnStart->setEnabled(true); m_btnSelectFiles->setEnabled(true); m_btnLoadTruth->setEnabled(true);
@@ -1152,6 +1266,21 @@ void MainWindow::onProcessingFinished() {
 
 void MainWindow::onBatchAccuracyComputed(int batchIndex, double accuracy) {
     m_batchAccuracies.append(qMakePair(batchIndex, accuracy));
+
+    QVector<double> batchX, batchY;
+    for (const auto& pair : m_batchAccuracies) {
+        batchX.append(pair.first);
+        batchY.append(pair.second);
+    }
+
+    // 【强绘图检查】确保 Graph 存在，强制绑定数据并刷新界限
+    if (m_plotBatchAccuracy && m_plotBatchAccuracy->graphCount() > 0) {
+        m_plotBatchAccuracy->graph(0)->setData(batchX, batchY);
+        m_plotBatchAccuracy->xAxis->setRange(0, batchX.isEmpty() ? 5 : batchX.last() + 1);
+        m_plotBatchAccuracy->yAxis->setRange(0, 105); // 强制规范Y轴高度
+        m_plotBatchAccuracy->replot();
+        updatePlotOriginalRange(m_plotBatchAccuracy);
+    }
 }
 
 QWidget* MainWindow::createCardWidget(QLabel* contentLabel, const QString& bgColor, const QString& title) {
@@ -1265,15 +1394,19 @@ void MainWindow::onEvaluationResultReady(const SystemEvaluationResult& result) {
     m_plotTargetAccuracy->replot();
     updatePlotOriginalRange(m_plotTargetAccuracy);
 
+    // 【同步更新总评时的批次走势图检查】
     QVector<double> batchX, batchY;
     for (const auto& pair : m_batchAccuracies) {
         batchX.append(pair.first);
         batchY.append(pair.second);
     }
-    m_plotBatchAccuracy->graph(0)->setData(batchX, batchY);
-    m_plotBatchAccuracy->xAxis->setRange(0, batchX.isEmpty() ? 5 : batchX.last() + 1);
-    m_plotBatchAccuracy->replot();
-    updatePlotOriginalRange(m_plotBatchAccuracy);
+    if (m_plotBatchAccuracy && m_plotBatchAccuracy->graphCount() > 0) {
+        m_plotBatchAccuracy->graph(0)->setData(batchX, batchY);
+        m_plotBatchAccuracy->xAxis->setRange(0, batchX.isEmpty() ? 5 : batchX.last() + 1);
+        m_plotBatchAccuracy->yAxis->setRange(0, 105);
+        m_plotBatchAccuracy->replot();
+        updatePlotOriginalRange(m_plotBatchAccuracy);
+    }
 
     m_mainTabWidget->setCurrentIndex(3);
 }
