@@ -18,6 +18,8 @@
 #include "../core/SelfValidator.h"
 #include <QDateTime>
 #include <QPointer>
+#include <QDialog>
+#include <QSpinBox>
 
 struct PlotLayoutInfo {
     QWidget* originalParent = nullptr;
@@ -42,40 +44,47 @@ protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
 private slots:
     void onSelectFilesClicked();
-    void onLoadTruthClicked();
+    void onManualTruthClicked(); // 【修改】：替换了原来的 onLoadTruthClicked
     void onStartClicked();
     void onPauseResumeClicked();
     void onStopClicked();
     void onExportClicked();
+
     void onFrameProcessed(const FrameResult& result);
     void appendLog(const QString& log);
     void appendReport(const QString& report);
     void onOfflineResultsReady(const QList<OfflineTargetResult>& results);
     void onProcessingFinished();
+    void onEvaluationResultReady(const SystemEvaluationResult& result);
+    void onBatchAccuracyComputed(int batchIndex, double accuracy);
 
     void onPlotContextMenu(const QPoint &pos);
     void onPlotMouseMove(QMouseEvent *event);
     void onPlotDoubleClick(QMouseEvent *event);
-    void onBatchAccuracyComputed(int batchIndex, double accuracy);
-
-    void onEvaluationResultReady(const SystemEvaluationResult& result);
 
 private:
     void setupUi();
-    void createTargetPlots(int targetId);
     void setupPlotInteraction(QCustomPlot* plot);
+    void popOutPlot(QCustomPlot* plot);
+    void restorePlot(QWidget* popupWindow);
     void updatePlotOriginalRange(QCustomPlot* plot);
+    void closePopupsFromLayout(QLayout* targetLayout);
+    void createTargetPlots(int targetId);
     void updateTab2Plots();
-
     QWidget* createCardWidget(QLabel* contentLabel, const QString& bgColor, const QString& title);
 
+    DspWorker* m_worker;
+    SelfValidator* m_validator;
+    QString m_currentDir;
+    DspConfig m_currentConfig;
+    QList<FrameResult> m_historyResults;
     QList<QPair<int, double>> m_batchAccuracies;
     QMap<int, TargetClassInfo> m_targetClasses;
 
-    void popOutPlot(QCustomPlot* plot);
-    void restorePlot(QWidget* popupWindow);
-    // 【新增】：安全回收悬浮窗，防野指针闪退
-    void closePopupsFromLayout(QLayout* targetLayout);
+    QMap<QWidget*, QPair<QCustomPlot*, PlotLayoutInfo>> m_popupPlots;
+    QMap<int, QCustomPlot*> m_lsPlots;
+    QMap<int, QCustomPlot*> m_lofarPlots;
+    QMap<int, QCustomPlot*> m_demonPlots;
 
     QLineEdit* m_editFs;
     QLineEdit* m_editM;
@@ -108,7 +117,7 @@ private:
     QLineEdit* m_editBatchSize;
 
     QPushButton* m_btnSelectFiles;
-    QPushButton* m_btnLoadTruth;
+    QPushButton* m_btnManualTruth; // 【修改】：替换了 m_btnLoadTruth
     QPushButton* m_btnStart;
     QPushButton* m_btnPauseResume;
     QPushButton* m_btnStop;
@@ -139,16 +148,4 @@ private:
     QCustomPlot* m_plotTargetAccuracy;
     QCustomPlot* m_plotBatchAccuracy;
     QCPBars* m_accuracyBars;
-
-    QMap<int, QCustomPlot*> m_lsPlots;
-    QMap<int, QCustomPlot*> m_lofarPlots;
-    QMap<int, QCustomPlot*> m_demonPlots;
-
-    DspWorker* m_worker;
-    SelfValidator* m_validator;
-
-    QList<FrameResult> m_historyResults;
-    QString m_currentDir;
-    DspConfig m_currentConfig;
-    QMap<QWidget*, QPair<QCustomPlot*, PlotLayoutInfo>> m_popupPlots;
 };

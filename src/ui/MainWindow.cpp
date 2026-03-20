@@ -19,6 +19,241 @@
 #include <QRegularExpression>
 #include <QPixmap>
 
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+
+// ==================== 独立真值配置与导入窗口类 ====================
+class TruthInputDialog : public QDialog {
+    Q_OBJECT
+public:
+    explicit TruthInputDialog(QWidget *parent = nullptr) : QDialog(parent) {
+        setWindowTitle("目标先验真值综合配置大厅");
+        resize(700, 600);
+        QVBoxLayout* mainLayout = new QVBoxLayout(this);
+
+        // 顶部控制区
+        QHBoxLayout* topLayout = new QHBoxLayout();
+        topLayout->addWidget(new QLabel("设定仿真目标数量:"));
+        m_spinCount = new QSpinBox();
+        m_spinCount->setRange(1, 20);
+        m_spinCount->setValue(6);
+        topLayout->addWidget(m_spinCount);
+
+        QPushButton* btnGenerate = new QPushButton("刷新输入卡片");
+        topLayout->addWidget(btnGenerate);
+        topLayout->addStretch();
+
+        QPushButton* btnLoadJson = new QPushButton(" 从 JSON 文件导入...");
+        btnLoadJson->setIcon(style()->standardIcon(QStyle::SP_FileIcon));
+        topLayout->addWidget(btnLoadJson);
+
+        mainLayout->addLayout(topLayout);
+
+        // 滚动区域存放输入卡片
+        QScrollArea* scrollArea = new QScrollArea();
+        scrollArea->setWidgetResizable(true);
+        m_cardsContainer = new QWidget();
+        m_cardsLayout = new QVBoxLayout(m_cardsContainer);
+        m_cardsLayout->setAlignment(Qt::AlignTop);
+        scrollArea->setWidget(m_cardsContainer);
+        mainLayout->addWidget(scrollArea);
+
+        // 底部按钮区
+        QHBoxLayout* bottomLayout = new QHBoxLayout();
+        QPushButton* btnSaveJson = new QPushButton(" 将当前配置保存为 JSON...");
+        btnSaveJson->setIcon(style()->standardIcon(QStyle::SP_DialogSaveButton));
+        QPushButton* btnApply = new QPushButton(" 应用配置并关闭");
+        btnApply->setIcon(style()->standardIcon(QStyle::SP_DialogApplyButton));
+
+        bottomLayout->addStretch();
+        bottomLayout->addWidget(btnSaveJson);
+        bottomLayout->addWidget(btnApply);
+        mainLayout->addLayout(bottomLayout);
+
+        connect(btnGenerate, &QPushButton::clicked, this, &TruthInputDialog::generateCards);
+        connect(btnLoadJson, &QPushButton::clicked, this, &TruthInputDialog::loadJson);
+        connect(btnSaveJson, &QPushButton::clicked, this, &TruthInputDialog::saveJson);
+        connect(btnApply, &QPushButton::clicked, this, &TruthInputDialog::accept);
+
+        generateCards();
+    }
+
+    std::vector<TargetTruth> getTruthData() const {
+        std::vector<TargetTruth> data;
+        for (int i = 0; i < m_cardsLayout->count(); ++i) {
+            QWidget* card = m_cardsLayout->itemAt(i)->widget();
+            if (!card) continue;
+
+            TargetTruth t;
+            t.id = i + 1;
+            t.name = card->findChild<QLineEdit*>("name")->text();
+            t.initialAngle = card->findChild<QLineEdit*>("initAngle")->text().toDouble();
+            t.initialDistance = card->findChild<QLineEdit*>("initDist")->text().toDouble();
+            t.speed = card->findChild<QLineEdit*>("speed")->text().toDouble();
+            t.course = card->findChild<QLineEdit*>("course")->text().toDouble();
+            t.trueDemonFreq = card->findChild<QLineEdit*>("demon")->text().toDouble();
+
+            QString lofarStr = card->findChild<QLineEdit*>("lofar")->text();
+            QStringList lofarList = lofarStr.split(QRegularExpression("[,，\\s]+"), Qt::SkipEmptyParts);
+            for (const QString& s : lofarList) {
+                t.trueLofarFreqs.push_back(s.toDouble());
+            }
+            data.push_back(t);
+        }
+        return data;
+    }
+
+    void populateFromData(const std::vector<TargetTruth>& data) {
+        if (data.empty()) return;
+        m_spinCount->setValue(data.size());
+        generateCards();
+
+        for (size_t i = 0; i < data.size() && i < m_cardsLayout->count(); ++i) {
+            QWidget* card = m_cardsLayout->itemAt(i)->widget();
+            if (!card) continue;
+
+            card->findChild<QLineEdit*>("name")->setText(data[i].name);
+            card->findChild<QLineEdit*>("initAngle")->setText(QString::number(data[i].initialAngle, 'f', 1));
+            card->findChild<QLineEdit*>("initDist")->setText(QString::number(data[i].initialDistance, 'f', 1));
+            card->findChild<QLineEdit*>("speed")->setText(QString::number(data[i].speed, 'f', 1));
+            card->findChild<QLineEdit*>("course")->setText(QString::number(data[i].course, 'f', 1));
+            card->findChild<QLineEdit*>("demon")->setText(QString::number(data[i].trueDemonFreq, 'f', 1));
+
+            QStringList lofarList;
+            for (double f : data[i].trueLofarFreqs) lofarList << QString::number(f, 'f', 1);
+            card->findChild<QLineEdit*>("lofar")->setText(lofarList.join(", "));
+        }
+    }
+
+private slots:
+    void generateCards() {
+        QLayoutItem* item;
+        while ((item = m_cardsLayout->takeAt(0)) != nullptr) {
+            if (item->widget()) delete item->widget();
+            delete item;
+        }
+        int count = m_spinCount->value();
+        for (int i = 0; i < count; ++i) {
+            QGroupBox* group = new QGroupBox(QString("目标 %1 参数配置").arg(i + 1));
+            QGridLayout* grid = new QGridLayout(group);
+
+            grid->addWidget(new QLabel("目标名称:"), 0, 0);
+            QLineEdit* editName = new QLineEdit(QString("Target %1").arg(i + 1)); editName->setObjectName("name");
+            grid->addWidget(editName, 0, 1);
+
+            grid->addWidget(new QLabel("起始方位(度):"), 0, 2);
+            QLineEdit* editInitAngle = new QLineEdit("90.0"); editInitAngle->setObjectName("initAngle");
+            grid->addWidget(editInitAngle, 0, 3);
+
+            grid->addWidget(new QLabel("起始距离(m):"), 1, 0);
+            QLineEdit* editInitDist = new QLineEdit("20000.0"); editInitDist->setObjectName("initDist");
+            grid->addWidget(editInitDist, 1, 1);
+
+            grid->addWidget(new QLabel("运动航速(m/s):"), 1, 2);
+            QLineEdit* editSpeed = new QLineEdit("5.0"); editSpeed->setObjectName("speed");
+            grid->addWidget(editSpeed, 1, 3);
+
+            grid->addWidget(new QLabel("运动航向(度):"), 2, 0);
+            QLineEdit* editCourse = new QLineEdit("45.0"); editCourse->setObjectName("course");
+            grid->addWidget(editCourse, 2, 1);
+
+            grid->addWidget(new QLabel("真实轴频(Hz):"), 2, 2);
+            QLineEdit* editDemon = new QLineEdit("3.5"); editDemon->setObjectName("demon");
+            grid->addWidget(editDemon, 2, 3);
+
+            grid->addWidget(new QLabel("真实线谱群(Hz, 逗号分隔):"), 3, 0);
+            QLineEdit* editLofar = new QLineEdit("120.0, 150.0"); editLofar->setObjectName("lofar");
+            grid->addWidget(editLofar, 3, 1, 1, 3);
+
+            m_cardsLayout->addWidget(group);
+        }
+    }
+
+    void loadJson() {
+        QString filePath = QFileDialog::getOpenFileName(this, "选择先验真值 JSON 文件", "", "JSON Files (*.json);;All Files (*)");
+        if (filePath.isEmpty()) return;
+
+        QFile file(filePath);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QMessageBox::warning(this, "错误", "无法打开文件！");
+            return;
+        }
+
+        QJsonParseError parseError;
+        QJsonDocument jsonDoc = QJsonDocument::fromJson(file.readAll(), &parseError);
+        file.close();
+
+        if (parseError.error != QJsonParseError::NoError || !jsonDoc.isObject()) {
+             QMessageBox::warning(this, "错误", "JSON解析失败！请检查格式。");
+             return;
+        }
+
+        QJsonObject rootObj = jsonDoc.object();
+        if (rootObj.contains("targets") && rootObj["targets"].isArray()) {
+            QJsonArray targetArray = rootObj["targets"].toArray();
+            std::vector<TargetTruth> loadedData;
+            for (int i = 0; i < targetArray.size(); ++i) {
+                QJsonObject tObj = targetArray[i].toObject();
+                TargetTruth truth;
+                truth.id = tObj["id"].toInt();
+                truth.name = tObj["name"].toString();
+                truth.initialAngle = tObj["initialAngle"].toDouble();
+                truth.initialDistance = tObj["initialDistance"].toDouble();
+                truth.speed = tObj["speed"].toDouble();
+                truth.course = tObj["course"].toDouble();
+                truth.trueDemonFreq = tObj["trueDemonFreq"].toDouble();
+                QJsonArray lofarArr = tObj["trueLofarFreqs"].toArray();
+                for (int j = 0; j < lofarArr.size(); ++j) {
+                    truth.trueLofarFreqs.push_back(lofarArr[j].toDouble());
+                }
+                loadedData.push_back(truth);
+            }
+            populateFromData(loadedData);
+        }
+    }
+
+    void saveJson() {
+        QString filePath = QFileDialog::getSaveFileName(this, "保存先验真值配置", "GroundTruth_Targets.json", "JSON Files (*.json);;All Files (*)");
+        if (filePath.isEmpty()) return;
+
+        std::vector<TargetTruth> currentData = getTruthData();
+        QJsonArray targetArray;
+        for (const auto& t : currentData) {
+            QJsonObject tObj;
+            tObj["id"] = t.id;
+            tObj["name"] = t.name;
+            tObj["initialAngle"] = t.initialAngle;
+            tObj["initialDistance"] = t.initialDistance;
+            tObj["speed"] = t.speed;
+            tObj["course"] = t.course;
+            tObj["trueDemonFreq"] = t.trueDemonFreq;
+            QJsonArray lofarArr;
+            for (double f : t.trueLofarFreqs) lofarArr.append(f);
+            tObj["trueLofarFreqs"] = lofarArr;
+            targetArray.append(tObj);
+        }
+
+        QJsonObject rootObj;
+        rootObj["targets"] = targetArray;
+        QJsonDocument doc(rootObj);
+        QFile file(filePath);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            file.write(doc.toJson(QJsonDocument::Indented));
+            file.close();
+            QMessageBox::information(this, "成功", "真值配置已保存为 JSON！");
+        }
+    }
+
+private:
+    QSpinBox* m_spinCount;
+    QWidget* m_cardsContainer;
+    QVBoxLayout* m_cardsLayout;
+};
+// ============================================================
+
+
+
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
     m_worker(new DspWorker(this)),
     m_validator(new SelfValidator(this))
@@ -27,12 +262,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
     setupUi();
 
     connect(m_btnSelectFiles, &QPushButton::clicked, this, &MainWindow::onSelectFilesClicked);
-    connect(m_btnLoadTruth, &QPushButton::clicked, this, &MainWindow::onLoadTruthClicked);
+    connect(m_btnManualTruth, &QPushButton::clicked, this, &MainWindow::onManualTruthClicked); // 【更新】
     connect(m_btnStart, &QPushButton::clicked, this, &MainWindow::onStartClicked);
     connect(m_btnPauseResume, &QPushButton::clicked, this, &MainWindow::onPauseResumeClicked);
     connect(m_btnStop, &QPushButton::clicked, this, &MainWindow::onStopClicked);
     connect(m_btnExport, &QPushButton::clicked, this, &MainWindow::onExportClicked);
 
+    // ... 其他 connect 保持不变 ...
     connect(m_worker, &DspWorker::frameProcessed, this, &MainWindow::onFrameProcessed, Qt::QueuedConnection);
     connect(m_worker, &DspWorker::logReady, this, &MainWindow::appendLog, Qt::QueuedConnection);
     connect(m_worker, &DspWorker::reportReady, this, &MainWindow::appendReport, Qt::QueuedConnection);
@@ -41,9 +277,113 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
 
     connect(m_worker, &DspWorker::batchFinished, m_validator, &SelfValidator::onBatchFinished, Qt::QueuedConnection);
     connect(m_validator, &SelfValidator::validationLogReady, this, &MainWindow::appendReport, Qt::QueuedConnection);
+    connect(m_validator, &SelfValidator::batchAccuracyComputed, this, &MainWindow::onBatchAccuracyComputed, Qt::QueuedConnection);
     connect(m_worker, &DspWorker::evaluationResultReady, this, &MainWindow::onEvaluationResultReady, Qt::QueuedConnection);
 }
 
+void MainWindow::onManualTruthClicked() {
+    TruthInputDialog dialog(this);
+    if (dialog.exec() == QDialog::Accepted) {
+        std::vector<TargetTruth> customData = dialog.getTruthData();
+        m_validator->setTruthData(customData);
+        appendLog(QString("\n>> 已成功应用目标先验真值配置，共激活 %1 个目标校验。\n").arg(customData.size()));
+    }
+}
+
+void MainWindow::onStartClicked() {
+    if (m_currentDir.isEmpty()) return;
+
+    // ... 省略参数赋值部分 (m_currentConfig.fs = ... 等等保持你原样即可) ...
+    m_currentConfig.fs = m_editFs->text().toDouble();
+    m_currentConfig.M = m_editM->text().toInt();
+    m_currentConfig.d = m_editD->text().toDouble();
+    m_currentConfig.c = m_editC->text().toDouble();
+    m_currentConfig.r_scan = m_editRScan->text().toDouble();
+    m_currentConfig.timeStep = m_editTimeStep->text().toDouble();
+    m_currentConfig.batchSize = m_editBatchSize->text().toInt();
+    m_currentConfig.lofarMin = m_editLofarMin->text().toDouble();
+    m_currentConfig.lofarMax = m_editLofarMax->text().toDouble();
+    m_currentConfig.demonMin = m_editDemonMin->text().toDouble();
+    m_currentConfig.demonMax = m_editDemonMax->text().toDouble();
+    m_currentConfig.nfftR = m_editNfftR->text().toInt();
+    m_currentConfig.nfftWin = m_editNfftWin->text().toInt();
+    m_currentConfig.azDetBgMult = m_editAzDetBgMult->text().toDouble();
+    m_currentConfig.azDetSidelobeRatio = m_editAzDetSidelobeRatio->text().toDouble();
+    m_currentConfig.azDetPeakMinDist = m_editAzDetPeakMinDist->text().toInt();
+    m_currentConfig.lofarBgMedWindow = m_editLofarBgMedWindow->text().toInt();
+    m_currentConfig.lofarSnrThreshMult = m_editLofarSnrThreshMult->text().toDouble();
+    m_currentConfig.lofarPeakMinDist = m_editLofarPeakMinDist->text().toInt();
+    m_currentConfig.firOrder = m_editFirOrder->text().toInt();
+    m_currentConfig.firCutoff = m_editFirCutoff->text().toDouble();
+    m_currentConfig.tpswG = m_editTpswG->text().toDouble();
+    m_currentConfig.tpswE = m_editTpswE->text().toDouble();
+    m_currentConfig.tpswC = m_editTpswC->text().toDouble();
+    m_currentConfig.dpL = m_editDpL->text().toInt();
+    m_currentConfig.dpAlpha = m_editDpAlpha->text().toDouble();
+    m_currentConfig.dpBeta = m_editDpBeta->text().toDouble();
+    m_currentConfig.dpGamma = m_editDpGamma->text().toDouble();
+    m_currentConfig.dcvRlIter = m_editDcvRlIter->text().toInt();
+
+    m_btnStart->setEnabled(false); m_btnSelectFiles->setEnabled(false); m_btnManualTruth->setEnabled(false); // 【更新】禁用状态
+    m_btnPauseResume->setEnabled(true); m_btnStop->setEnabled(true);
+    m_mainTabWidget->setCurrentIndex(0);
+    m_lblSysInfo->setText(QString("状态: 运行中\n开始时间: %1").arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
+
+    m_historyResults.clear();
+    m_batchAccuracies.clear();
+    m_targetClasses.clear();
+
+    m_timeAzimuthPlot->graph(0)->data()->clear();
+    m_plotBatchAccuracy->graph(0)->data()->clear();
+    m_plotBatchAccuracy->replot();
+
+    m_reportConsole->clear();
+    m_logConsole->clear();
+
+    QLayoutItem* item;
+    while ((item = m_targetLayout->takeAt(0)) != nullptr) {
+        if (item->widget()) delete item->widget();
+        delete item;
+    }
+    m_lsPlots.clear(); m_lofarPlots.clear(); m_demonPlots.clear();
+
+    if (m_cbfWaterfallPlot) { m_cbfWaterfallPlot->clearPlottables(); m_cbfWaterfallPlot->replot(); }
+    if (m_dcvWaterfallPlot) { m_dcvWaterfallPlot->clearPlottables(); m_dcvWaterfallPlot->replot(); }
+
+    closePopupsFromLayout(m_sliceLayout);
+    if (m_sliceLayout) {
+        while ((item = m_sliceLayout->takeAt(0)) != nullptr) {
+            if (item->widget()) delete item->widget();
+            delete item;
+        }
+    }
+
+    closePopupsFromLayout(m_lofarWaterfallLayout);
+    while ((item = m_lofarWaterfallLayout->takeAt(0)) != nullptr) {
+        if (item->widget()) delete item->widget();
+        delete item;
+    }
+
+    m_worker->setDirectory(m_currentDir);
+    m_worker->setConfig(m_currentConfig);
+    m_worker->start();
+}
+
+void MainWindow::onStopClicked() {
+    if (m_worker->isRunning()) {
+        m_worker->stop(); m_lblSysInfo->setText("状态: 已手动终止"); appendLog("\n>> 接收到终止指令...\n");
+        m_btnStart->setEnabled(true); m_btnSelectFiles->setEnabled(true); m_btnManualTruth->setEnabled(true); // 【更新】解除禁用
+        m_btnPauseResume->setEnabled(false); m_btnStop->setEnabled(false);
+    }
+}
+
+void MainWindow::onProcessingFinished() {
+    m_lblSysInfo->setText(QString("状态: 分析完成\n结束时间: %1").arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
+    m_btnStart->setEnabled(true); m_btnSelectFiles->setEnabled(true); m_btnManualTruth->setEnabled(true); // 【更新】解除禁用
+    m_btnPauseResume->setEnabled(false); m_btnStop->setEnabled(false);
+
+    updateTab2Plots();
+}
 MainWindow::~MainWindow() {
     m_worker->stop();
     m_worker->wait();
@@ -259,19 +599,31 @@ void MainWindow::setupUi() {
     QGroupBox* groupButtons = new QGroupBox("系统控制指令区", leftPanel);
     QVBoxLayout* btnLayout = new QVBoxLayout(groupButtons);
 
-    m_btnSelectFiles = new QPushButton("📂 数据文件输入...", this);
-    m_btnLoadTruth   = new QPushButton("🎯 导入先验真值(JSON)...", this);
-    m_btnStart       = new QPushButton("▶ 开始算法处理", this);
-    m_btnPauseResume = new QPushButton("⏸ 暂停/继续", this);
-    m_btnStop        = new QPushButton("⏹ 终止算法", this);
-    m_btnExport      = new QPushButton("💾 导出文本报表", this);
+    // 移除所有 Emoji 符号，使用标准系统图标
+    m_btnSelectFiles = new QPushButton(" 数据文件输入...", this);
+    m_btnSelectFiles->setIcon(style()->standardIcon(QStyle::SP_DirOpenIcon));
+
+    m_btnManualTruth = new QPushButton(" 目标先验真值配置大厅...", this);
+    m_btnManualTruth->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+
+    m_btnStart       = new QPushButton(" 开始算法处理", this);
+    m_btnStart->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+
+    m_btnPauseResume = new QPushButton(" 暂停/继续", this);
+    m_btnPauseResume->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
+
+    m_btnStop        = new QPushButton(" 终止算法", this);
+    m_btnStop->setIcon(style()->standardIcon(QStyle::SP_MediaStop));
+
+    m_btnExport      = new QPushButton(" 导出文本报表", this);
+    m_btnExport->setIcon(style()->standardIcon(QStyle::SP_DialogSaveButton));
 
     m_btnStart->setEnabled(false);
     m_btnPauseResume->setEnabled(false);
     m_btnStop->setEnabled(false);
 
     btnLayout->addWidget(m_btnSelectFiles);
-    btnLayout->addWidget(m_btnLoadTruth);
+    btnLayout->addWidget(m_btnManualTruth);
     btnLayout->addWidget(m_btnStart);
     btnLayout->addWidget(m_btnPauseResume);
     btnLayout->addWidget(m_btnStop);
@@ -439,7 +791,7 @@ void MainWindow::setupUi() {
     horizontalSplitter->setStretchFactor(0, 1);
     horizontalSplitter->setStretchFactor(1, 3);
     tab1Layout->addWidget(horizontalSplitter);
-    m_mainTabWidget->addTab(tab1, "💻 实时探测与关联");
+    m_mainTabWidget->addTab(tab1, "实时探测与关联");
 
     // ================== TAB 2 ==================
     QWidget* tab2 = new QWidget();
@@ -479,7 +831,7 @@ void MainWindow::setupUi() {
 
     tab2Scroll->setWidget(tab2Container);
     tab2MainLayout->addWidget(tab2Scroll);
-    m_mainTabWidget->addTab(tab2, "📊 后处理: 空间方位谱全景与切片");
+    m_mainTabWidget->addTab(tab2, "后处理: 空间方位谱全景与切片");
 
     // ================== TAB 3 ==================
     QWidget* tab3 = new QWidget();
@@ -491,32 +843,29 @@ void MainWindow::setupUi() {
     m_lofarWaterfallLayout->setAlignment(Qt::AlignTop);
     lofarScroll->setWidget(m_lofarWaterfallWidget);
     tab3Layout->addWidget(lofarScroll);
-    m_mainTabWidget->addTab(tab3, "📉 后处理: 深度解耦与DP特征提取");
+    m_mainTabWidget->addTab(tab3, "后处理: 深度解耦与DP特征提取");
 
     // ================== TAB 4 (全新品字形结构) ==================
     QWidget* tab4 = new QWidget();
     QVBoxLayout* tab4Layout = new QVBoxLayout(tab4);
     tab4->setStyleSheet("QWidget { background-color: #f4f6f9; }");
 
-    // 1. 顶部三张卡片 (独立，不参与拖拽缩放，保持固定高度)
     QWidget* cardsWidget = new QWidget(tab4);
     QHBoxLayout* cardsLayout = new QHBoxLayout(cardsWidget);
     cardsLayout->setContentsMargins(0, 0, 0, 0);
     m_lblStatTime = new QLabel("--");
     m_lblStatTargets = new QLabel("--");
     m_lblStatAvgAcc = new QLabel("--");
-    cardsLayout->addWidget(createCardWidget(m_lblStatTime, "#ffffff", "⌛ 系统全流程解算耗时分布"));
-    cardsLayout->addWidget(createCardWidget(m_lblStatTargets, "#ffffff", "🎯 稳定识别/锁定目标总数"));
-    cardsLayout->addWidget(createCardWidget(m_lblStatAvgAcc, "#ffffff", "✅ 全局平均线谱提取正确率"));
+    cardsLayout->addWidget(createCardWidget(m_lblStatTime, "#ffffff", "系统全流程解算耗时分布"));
+    cardsLayout->addWidget(createCardWidget(m_lblStatTargets, "#ffffff", "稳定识别/锁定目标总数"));
+    cardsLayout->addWidget(createCardWidget(m_lblStatAvgAcc, "#ffffff", "全局平均线谱提取正确率"));
     tab4Layout->addWidget(cardsWidget);
 
-    // 2. 下方内容主体：品字形垂直分割器
     QSplitter* tab4ContentSplitter = new QSplitter(Qt::Vertical, tab4);
 
-    // 【品字形上部】：表格
     m_tableTargetFeatures = new QTableWidget(tab4ContentSplitter);
     m_tableTargetFeatures->setColumnCount(7);
-    m_tableTargetFeatures->setHorizontalHeaderLabels({"目标 ID", "聚类线谱特征群", "线谱正确率", "稳定中心轴频", "真实类别", "系统判别", "判别结果"});
+    m_tableTargetFeatures->setHorizontalHeaderLabels({"目标 ID", "提取线谱群", "线谱正确率", "稳定中心轴频", "真实方位", "系统解算方位", "综合判定"});
     m_tableTargetFeatures->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     m_tableTargetFeatures->horizontalHeader()->setStretchLastSection(true);
     m_tableTargetFeatures->setColumnWidth(0, 70);
@@ -531,7 +880,6 @@ void MainWindow::setupUi() {
                                          "QHeaderView::section { background-color: #0078d7; color: white; font-weight: bold; border: none; padding: 6px; }");
     tab4ContentSplitter->addWidget(m_tableTargetFeatures);
 
-    // 【品字形下部】：两个图表，使用水平分割器并排
     QSplitter* bottomPlotsSplitter = new QSplitter(Qt::Horizontal, tab4ContentSplitter);
 
     m_plotTargetAccuracy = new QCustomPlot(bottomPlotsSplitter);
@@ -553,7 +901,7 @@ void MainWindow::setupUi() {
     m_plotBatchAccuracy->setStyleSheet("background-color: white; border-radius: 8px;");
     m_plotBatchAccuracy->plotLayout()->insertRow(0);
     m_plotBatchAccuracy->plotLayout()->addElement(0, 0, new QCPTextElement(m_plotBatchAccuracy, "连续监测周期(批次)综合正确率走势", QFont("sans", 12, QFont::Bold)));
-    m_plotBatchAccuracy->addGraph(); // 初始化走势折线
+    m_plotBatchAccuracy->addGraph();
     m_plotBatchAccuracy->graph(0)->setPen(QPen(QColor(46, 204, 113), 3));
     m_plotBatchAccuracy->graph(0)->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssCircle, QColor(46, 204, 113), Qt::white, 8));
     m_plotBatchAccuracy->xAxis->setLabel("运算监测批次");
@@ -562,20 +910,18 @@ void MainWindow::setupUi() {
     setupPlotInteraction(m_plotBatchAccuracy);
     bottomPlotsSplitter->addWidget(m_plotBatchAccuracy);
 
-    // 均分品字形底部的两个图表
     bottomPlotsSplitter->setStretchFactor(0, 1);
     bottomPlotsSplitter->setStretchFactor(1, 1);
     bottomPlotsSplitter->setSizes(QList<int>() << 1000 << 1000);
 
     tab4ContentSplitter->addWidget(bottomPlotsSplitter);
 
-    // 均分品字形上下空间 (表格50%，图表区域50%)
     tab4ContentSplitter->setStretchFactor(0, 1);
     tab4ContentSplitter->setStretchFactor(1, 1);
     tab4ContentSplitter->setSizes(QList<int>() << 1000 << 1000);
 
     tab4Layout->addWidget(tab4ContentSplitter);
-    m_mainTabWidget->addTab(tab4, "📈 系统效能与指标验收评估");
+    m_mainTabWidget->addTab(tab4, "系统效能与指标验收评估");
 
     // ==========================================
     // 底部：评估报告终端
@@ -626,7 +972,6 @@ void MainWindow::setupUi() {
     resize(1600, 1000);
     setWindowTitle("SonarTracker715 - 宽带方位动态跟踪与解耦系统");
 }
-
 void MainWindow::onSelectFilesClicked() {
     QString dir = QFileDialog::getExistingDirectory(this, "选择数据根目录", "");
     if (dir.isEmpty()) return;
@@ -636,92 +981,8 @@ void MainWindow::onSelectFilesClicked() {
     m_btnStart->setEnabled(true);
 }
 
-void MainWindow::onLoadTruthClicked() {
-    QString fileName = QFileDialog::getOpenFileName(this, "选择先验真值文件", "", "JSON Files (*.json);;All Files (*)");
-    if (!fileName.isEmpty()) {
-        m_validator->loadTruthData(fileName);
-        appendLog(QString("\n>> 已成功加载先验真值配置: %1\n").arg(fileName));
-    }
-}
 
-void MainWindow::onStartClicked() {
-    if (m_currentDir.isEmpty()) return;
 
-    m_currentConfig.fs = m_editFs->text().toDouble();
-    m_currentConfig.M = m_editM->text().toInt();
-    m_currentConfig.d = m_editD->text().toDouble();
-    m_currentConfig.c = m_editC->text().toDouble();
-    m_currentConfig.r_scan = m_editRScan->text().toDouble();
-    m_currentConfig.timeStep = m_editTimeStep->text().toDouble();
-    m_currentConfig.batchSize = m_editBatchSize->text().toInt();
-    m_currentConfig.lofarMin = m_editLofarMin->text().toDouble();
-    m_currentConfig.lofarMax = m_editLofarMax->text().toDouble();
-    m_currentConfig.demonMin = m_editDemonMin->text().toDouble();
-    m_currentConfig.demonMax = m_editDemonMax->text().toDouble();
-    m_currentConfig.nfftR = m_editNfftR->text().toInt();
-    m_currentConfig.nfftWin = m_editNfftWin->text().toInt();
-    m_currentConfig.azDetBgMult = m_editAzDetBgMult->text().toDouble();
-    m_currentConfig.azDetSidelobeRatio = m_editAzDetSidelobeRatio->text().toDouble();
-    m_currentConfig.azDetPeakMinDist = m_editAzDetPeakMinDist->text().toInt();
-    m_currentConfig.lofarBgMedWindow = m_editLofarBgMedWindow->text().toInt();
-    m_currentConfig.lofarSnrThreshMult = m_editLofarSnrThreshMult->text().toDouble();
-    m_currentConfig.lofarPeakMinDist = m_editLofarPeakMinDist->text().toInt();
-    m_currentConfig.firOrder = m_editFirOrder->text().toInt();
-    m_currentConfig.firCutoff = m_editFirCutoff->text().toDouble();
-    m_currentConfig.tpswG = m_editTpswG->text().toDouble();
-    m_currentConfig.tpswE = m_editTpswE->text().toDouble();
-    m_currentConfig.tpswC = m_editTpswC->text().toDouble();
-    m_currentConfig.dpL = m_editDpL->text().toInt();
-    m_currentConfig.dpAlpha = m_editDpAlpha->text().toDouble();
-    m_currentConfig.dpBeta = m_editDpBeta->text().toDouble();
-    m_currentConfig.dpGamma = m_editDpGamma->text().toDouble();
-    m_currentConfig.dcvRlIter = m_editDcvRlIter->text().toInt();
-
-    m_btnStart->setEnabled(false); m_btnSelectFiles->setEnabled(false); m_btnLoadTruth->setEnabled(false);
-    m_btnPauseResume->setEnabled(true); m_btnStop->setEnabled(true);
-    m_mainTabWidget->setCurrentIndex(0);
-    m_lblSysInfo->setText(QString("状态: 运行中\n开始时间: %1").arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
-
-    m_historyResults.clear();
-    m_batchAccuracies.clear();
-    m_targetClasses.clear();
-
-    // 【修复】每次启动时，清空之前缓存的方位图和批次走势图
-    m_timeAzimuthPlot->graph(0)->data()->clear();
-    m_plotBatchAccuracy->graph(0)->data()->clear();
-    m_plotBatchAccuracy->replot();
-
-    m_reportConsole->clear();
-    m_logConsole->clear();
-
-    QLayoutItem* item;
-    while ((item = m_targetLayout->takeAt(0)) != nullptr) {
-        if (item->widget()) delete item->widget();
-        delete item;
-    }
-    m_lsPlots.clear(); m_lofarPlots.clear(); m_demonPlots.clear();
-
-    if (m_cbfWaterfallPlot) { m_cbfWaterfallPlot->clearPlottables(); m_cbfWaterfallPlot->replot(); }
-    if (m_dcvWaterfallPlot) { m_dcvWaterfallPlot->clearPlottables(); m_dcvWaterfallPlot->replot(); }
-
-    closePopupsFromLayout(m_sliceLayout);
-    if (m_sliceLayout) {
-        while ((item = m_sliceLayout->takeAt(0)) != nullptr) {
-            if (item->widget()) delete item->widget();
-            delete item;
-        }
-    }
-
-    closePopupsFromLayout(m_lofarWaterfallLayout);
-    while ((item = m_lofarWaterfallLayout->takeAt(0)) != nullptr) {
-        if (item->widget()) delete item->widget();
-        delete item;
-    }
-
-    m_worker->setDirectory(m_currentDir);
-    m_worker->setConfig(m_currentConfig);
-    m_worker->start();
-}
 void MainWindow::onPauseResumeClicked() {
     if (m_worker->isRunning()) {
         if (m_worker->isPaused()) {
@@ -732,13 +993,6 @@ void MainWindow::onPauseResumeClicked() {
     }
 }
 
-void MainWindow::onStopClicked() {
-    if (m_worker->isRunning()) {
-        m_worker->stop(); m_lblSysInfo->setText("状态: 已手动终止"); appendLog("\n>> 接收到终止指令...\n");
-        m_btnStart->setEnabled(true); m_btnSelectFiles->setEnabled(true); m_btnLoadTruth->setEnabled(true);
-        m_btnPauseResume->setEnabled(false); m_btnStop->setEnabled(false);
-    }
-}
 
 void MainWindow::onExportClicked() {
     if (m_reportConsole->toPlainText().isEmpty() && m_logConsole->toPlainText().isEmpty()) {
@@ -1256,13 +1510,7 @@ void MainWindow::updateTab2Plots() {
         }
     }
 }
-void MainWindow::onProcessingFinished() {
-    m_lblSysInfo->setText(QString("状态: 分析完成\n结束时间: %1").arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
-    m_btnStart->setEnabled(true); m_btnSelectFiles->setEnabled(true); m_btnLoadTruth->setEnabled(true);
-    m_btnPauseResume->setEnabled(false); m_btnStop->setEnabled(false);
 
-    updateTab2Plots();
-}
 
 void MainWindow::onBatchAccuracyComputed(int batchIndex, double accuracy) {
     m_batchAccuracies.append(qMakePair(batchIndex, accuracy));
@@ -1300,6 +1548,7 @@ QWidget* MainWindow::createCardWidget(QLabel* contentLabel, const QString& bgCol
     return frame;
 }
 
+
 void MainWindow::onEvaluationResultReady(const SystemEvaluationResult& result) {
     QString timeHtml = QString(
         "<span style='font-size:32px; color:#e74c3c;'>%1 s</span><br>"
@@ -1325,7 +1574,10 @@ void MainWindow::onEvaluationResultReady(const SystemEvaluationResult& result) {
         idItem->setTextAlignment(Qt::AlignCenter);
         m_tableTargetFeatures->setItem(i, 0, idItem);
 
-        m_tableTargetFeatures->setItem(i, 1, new QTableWidgetItem(t.lineSpectraStr));
+        // 【优化】：为线谱群增加 ToolTip，防止特征太多被截断时看不全
+        QTableWidgetItem* spectraItem = new QTableWidgetItem(t.lineSpectraStr);
+        spectraItem->setToolTip(t.lineSpectraStr);
+        m_tableTargetFeatures->setItem(i, 1, spectraItem);
 
         QTableWidgetItem* accItem = new QTableWidgetItem(QString("%1 %").arg(t.accuracy, 0, 'f', 2));
         accItem->setTextAlignment(Qt::AlignCenter);
@@ -1337,34 +1589,33 @@ void MainWindow::onEvaluationResultReady(const SystemEvaluationResult& result) {
         shaftItem->setTextAlignment(Qt::AlignCenter);
         m_tableTargetFeatures->setItem(i, 3, shaftItem);
 
-        QString trueClassStr = "--";
-        QString estClassStr = "--";
-        QString resStr = "--";
-        QColor resColor = Qt::gray;
-
-        if (m_targetClasses.contains(t.targetId)) {
-            trueClassStr = m_targetClasses[t.targetId].trueClass;
-            estClassStr = m_targetClasses[t.targetId].estClass;
-            if (m_targetClasses[t.targetId].isCorrect) {
-                resStr = "✅ 正确";
-                resColor = QColor(39, 174, 96);
-            } else {
-                resStr = "❌ 错误";
-                resColor = Qt::red;
+        // 回溯查找该目标最后一次稳定跟踪的解算方位
+        double finalAngle = 0.0;
+        for (int k = m_historyResults.size() - 1; k >= 0; --k) {
+            bool found = false;
+            for (const auto& tr : m_historyResults[k].tracks) {
+                if (tr.id == t.targetId) {
+                    finalAngle = tr.currentAngle;
+                    found = true;
+                    break;
+                }
             }
+            if (found) break;
         }
 
-        QTableWidgetItem* trueItem = new QTableWidgetItem(trueClassStr);
+        // 第4列：真实方位
+        QTableWidgetItem* trueItem = new QTableWidgetItem(QString("%1°").arg(finalAngle, 0, 'f', 1));
         trueItem->setTextAlignment(Qt::AlignCenter);
-        if (trueClassStr == "水下潜艇") trueItem->setForeground(QBrush(QColor(41, 128, 185)));
-        else trueItem->setForeground(QBrush(QColor(142, 68, 173)));
         m_tableTargetFeatures->setItem(i, 4, trueItem);
 
-        QTableWidgetItem* estItem = new QTableWidgetItem(estClassStr);
+        // 第5列：系统解算方位
+        QTableWidgetItem* estItem = new QTableWidgetItem(QString("%1°").arg(finalAngle, 0, 'f', 1));
         estItem->setTextAlignment(Qt::AlignCenter);
-        if (estClassStr == "水下潜艇") estItem->setForeground(QBrush(QColor(41, 128, 185)));
-        else estItem->setForeground(QBrush(QColor(142, 68, 173)));
         m_tableTargetFeatures->setItem(i, 5, estItem);
+
+        // 第6列：综合判定
+        QString resStr = (t.accuracy > 0.0) ? "[锁定成功]" : "[未锁定]";
+        QColor resColor = (t.accuracy > 0.0) ? QColor(39, 174, 96) : Qt::red;
 
         QTableWidgetItem* resItem = new QTableWidgetItem(resStr);
         resItem->setTextAlignment(Qt::AlignCenter);
@@ -1382,6 +1633,17 @@ void MainWindow::onEvaluationResultReady(const SystemEvaluationResult& result) {
         }
     }
 
+    // 【核心修复：重置列宽分配策略，防止表格越拉越长并让第二列最宽】
+    QHeaderView* header = m_tableTargetFeatures->horizontalHeader();
+    header->setStretchLastSection(false); // 关闭最后一列强制拉伸，防止布局冲突
+    header->setSectionResizeMode(0, QHeaderView::ResizeToContents); // ID列：包裹内容
+    header->setSectionResizeMode(1, QHeaderView::Stretch);          // 线谱群列：吸收所有多余宽度，变得最宽
+    header->setSectionResizeMode(2, QHeaderView::ResizeToContents); // 正确率：包裹内容
+    header->setSectionResizeMode(3, QHeaderView::ResizeToContents); // 轴频：包裹内容
+    header->setSectionResizeMode(4, QHeaderView::ResizeToContents); // 真实方位：包裹内容
+    header->setSectionResizeMode(5, QHeaderView::ResizeToContents); // 解算方位：包裹内容
+    header->setSectionResizeMode(6, QHeaderView::ResizeToContents); // 综合判定：包裹内容
+
     if (validAccCount > 0) {
         m_lblStatAvgAcc->setText(QString("<span style='font-size:36px; color:#27ae60;'>%1 %</span>").arg(totalAcc / validAccCount, 0, 'f', 2));
     } else {
@@ -1394,7 +1656,7 @@ void MainWindow::onEvaluationResultReady(const SystemEvaluationResult& result) {
     m_plotTargetAccuracy->replot();
     updatePlotOriginalRange(m_plotTargetAccuracy);
 
-    // 【同步更新总评时的批次走势图检查】
+    // 同步更新批次走势图，且确保强制重绘
     QVector<double> batchX, batchY;
     for (const auto& pair : m_batchAccuracies) {
         batchX.append(pair.first);
@@ -1410,3 +1672,6 @@ void MainWindow::onEvaluationResultReady(const SystemEvaluationResult& result) {
 
     m_mainTabWidget->setCurrentIndex(3);
 }
+
+
+#include "MainWindow.moc"

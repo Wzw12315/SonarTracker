@@ -48,15 +48,13 @@ Q_DECLARE_METATYPE(DspConfig)
 struct TargetTruth {
     int id;
     QString name;
-    double initialAngle;
-    double initialDistance;
-    double speed;
-    double course;
-    double trueDepth;
-    std::vector<double> trueLofarFreqs;
-    double trueDemonFreq;
+    double initialAngle;      // 起始方位(度)
+    double initialDistance;   // 起始距离(m)
+    double speed;             // 航速(m/s)
+    double course;            // 航向(度)
+    std::vector<double> trueLofarFreqs; // 真实线谱群
+    double trueDemonFreq;     // 真实轴频
 };
-
 struct BatchTargetFeature {
     int formalId;
     double calAngle;
