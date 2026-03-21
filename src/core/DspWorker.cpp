@@ -180,7 +180,7 @@ void DspWorker::run() {
         precomputed_PSF.col(k) = PSF_f;
     }
 
-    auto generateAndEmitEvaluation = [&]() {
+    auto generateAndEmitEvaluation = [&](bool isFinal = false) {
         double total_time_sec = globalTimer.elapsed() / 1000.0;
         double realtime_time_sec = totalRealtimeMs / 1000.0;
         double batch_time_sec = totalBatchMs / 1000.0;
@@ -225,7 +225,6 @@ void DspWorker::run() {
                         for (double f : t.lineSpectra) freqs.push_back(f);
                         for (double f : t.lineSpectraDcv) freqsDcv.push_back(f);
 
-                        // 记录解算方位的初值和末值
                         if (initCalcAngle < 0) {
                             initCalcAngle = t.currentAngle;
                             firstTime = frame.timestamp;
@@ -247,12 +246,11 @@ void DspWorker::run() {
                 }
             }
 
-            // 根据运动学推算真值的初值和末值
             double initTrueAngle = 0.0;
             double currTrueAngle = 0.0;
             if (hasTruth) {
                 initTrueAngle = currentTruth.initialAngle;
-                double dt = lastTime; // 使用绝对时间戳作为运动时间计算
+                double dt = lastTime;
                 if (dt > 0) {
                     double x0 = currentTruth.initialDistance * std::sin(currentTruth.initialAngle * M_PI / 180.0);
                     double y0 = currentTruth.initialDistance * std::cos(currentTruth.initialAngle * M_PI / 180.0);
@@ -391,7 +389,6 @@ void DspWorker::run() {
 
             double median_shaft = shafts.empty() ? 0.0 : calculateMedian(shafts);
 
-            // 组装最终日志：加入了方位信息
             report += QString("  ▶ 目标 %1             [瞬时线谱] : %2\n").arg(tid).arg(freqStr);
             report += QString("                      [DCV累积线谱] : %1\n").arg(freqStrDcv);
 
@@ -433,26 +430,28 @@ void DspWorker::run() {
         report += "\n[BATCH_ACCURACY_TABLE_PLACEHOLDER]\n";
         emit evaluationResultReady(evalRes);
 
-        report += "=================================================================================\n";
-        report += "                 目标每帧方位角动态跟踪表 (DCV vs CBF 精度对比)              \n";
-        report += "=================================================================================\n";
-        QString h1 = "| 帧号   | 时间(s)  ";
-        for (int tid : valid_tids) h1 += QString("|   目标%1(DCV/CBF)   ").arg(tid, -6);
-        report += h1 + "|\n|--------|----------";
-        for (int tid : valid_tids) report += "|--------------------------";
-        report += "|\n";
+        if (isFinal) {
+            report += "=================================================================================\n";
+            report += "                 目标每帧方位角动态跟踪表 (DCV vs CBF 精度对比)              \n";
+            report += "=================================================================================\n";
+            QString h1 = "| 帧号   | 时间(s)  ";
+            for (int tid : valid_tids) h1 += QString("|   目标%1(DCV/CBF)   ").arg(tid, -6);
+            report += h1 + "|\n|--------|----------";
+            for (int tid : valid_tids) report += "|--------------------------";
+            report += "|\n";
 
-        for (const auto& f : history_frames) {
-            QString row = QString("| %1 | %2 ").arg(f.frameIndex, -6).arg(f.timestamp, -8, 'f', 1);
-            for (int tid : valid_tids) {
-                double ang_dcv = -1, ang_cbf = -1;
-                for(auto& tr : f.tracks) { if(tr.id == tid) { ang_dcv = tr.currentAngle; ang_cbf = tr.currentAngleCbf; } }
-                if(ang_dcv >= 0) row += QString("|  %1° / %2°       ").arg(ang_dcv, 5, 'f', 1).arg(ang_cbf, 5, 'f', 1);
-                else row += "| -                        ";
+            for (const auto& f : history_frames) {
+                QString row = QString("| %1 | %2 ").arg(f.frameIndex, -6).arg(f.timestamp, -8, 'f', 1);
+                for (int tid : valid_tids) {
+                    double ang_dcv = -1, ang_cbf = -1;
+                    for(auto& tr : f.tracks) { if(tr.id == tid) { ang_dcv = tr.currentAngle; ang_cbf = tr.currentAngleCbf; } }
+                    if(ang_dcv >= 0) row += QString("|  %1° / %2°       ").arg(ang_dcv, 5, 'f', 1).arg(ang_cbf, 5, 'f', 1);
+                    else row += "| -                        ";
+                }
+                report += row + "|\n";
             }
-            report += row + "|\n";
+            report += "=================================================================================\n";
         }
-        report += "=================================================================================\n";
         emit reportReady(report);
     };
 
@@ -846,8 +845,9 @@ void DspWorker::run() {
                         if (tr.id == tid) {
                             tHistory.push_back(tr.lofarFullLinear);
                             if (startAng < 0 && tr.isActive) startAng = tr.currentAngle;
-                            if (tr.isActive && !tr.lineSpectra.empty()) {
-                                for(double f_line : tr.lineSpectra) {
+                            // 【意见四】：使用 DCV 高分辨线谱池去定位频域包裹宽度
+                            if (tr.isActive && !tr.lineSpectraDcv.empty()) {
+                                for(double f_line : tr.lineSpectraDcv) {
                                     if(f_line < minFoundFreq) minFoundFreq = f_line;
                                     if(f_line > maxFoundFreq) maxFoundFreq = f_line;
                                 }
@@ -880,12 +880,13 @@ void DspWorker::run() {
                 offRes.maxTime = history_frames.back().timestamp;
                 if (std::abs(offRes.maxTime - offRes.minTime) < 0.1) offRes.maxTime += 3.0;
 
+                // 基于探测出的最左与最右 DCV 线谱特征频点，加上下各 5 Hz 裕度来框选显示轴界
                 if (minFoundFreq > maxFoundFreq) {
                     offRes.displayFreqMin = m_config.lofarMin;
                     offRes.displayFreqMax = m_config.lofarMax;
                 } else {
-                    offRes.displayFreqMin = std::max(0.0, minFoundFreq - 15.0);
-                    offRes.displayFreqMax = std::min(fs / 2.0, maxFoundFreq + 15.0);
+                    offRes.displayFreqMin = std::max(0.0, minFoundFreq - 5.0);
+                    offRes.displayFreqMax = std::min(fs / 2.0, maxFoundFreq + 5.0);
                 }
 
                 offRes.rawLofarDb.resize(M_time * half_fft);
@@ -910,13 +911,14 @@ void DspWorker::run() {
             batchIndex++;
             batchStartFrame = frameIndex + 1;
 
-            generateAndEmitEvaluation();
+            bool isLastBatch = (frameIndex == timeToFilesMap.size());
+            generateAndEmitEvaluation(isLastBatch);
         }
         frameIndex++;
     }
 
     if (!m_isRunning) {
-        generateAndEmitEvaluation();
+        generateAndEmitEvaluation(true);
     }
 
     fftw_destroy_plan(plan_ifft); fftw_free(demon_ifft_in); fftw_free(demon_ifft_out);

@@ -159,4 +159,9 @@ private:
 
     QLineEdit* m_editDeleteTargetId;
     QPushButton* m_btnDeleteTarget;
+
+    QCustomPlot* m_plotTrueAzimuth;
+        QCustomPlot* m_plotCalcAzimuth;
+        QMap<int, QCPGraph*> m_trueAzimuthGraphs;
+        QMap<int, QCPGraph*> m_calcAzimuthGraphs;
 };

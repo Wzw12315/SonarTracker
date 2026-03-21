@@ -37,13 +37,15 @@ struct DspConfig {
     int firOrder = 64;
     double firCutoff = 0.1;
 
-    double tpswG = 45.0;
-    double tpswE = 2.0;
-    double tpswC = 1.15;
-    int dpL = 5;
-    double dpAlpha = 1.5;
-    double dpBeta = 1.0;
-    double dpGamma = 0.1;
+    // 【针对低 SNR 环境优化的后处理参数】
+        double tpswG = 45.0;     // 保护窗保持 45（约 7.5Hz）评估局部背景足够了
+        double tpswE = 10.0;     // 【调大】排除窗，防止弱信号的主瓣展宽被误认为背景
+        double tpswC = 1.25;     // 【调大】补偿因子，拉高检测门限，压制大量离散噪声点
+
+        int dpL = 3;             // 【调小】搜索限制窗，严禁航迹大跨度跳跃
+        double dpAlpha = 2.5;    // 【大幅调大】惩罚因子，强制提取出连贯、平滑的直线特征
+        double dpBeta = 0.8;     // 【调小】幅度权重，削弱对瞬时高亮噪声点的盲目追随
+        double dpGamma = 0.1;
 
     int batchSize = 40;
 
