@@ -293,7 +293,6 @@ void MainWindow::onManualTruthClicked() {
 void MainWindow::onStartClicked() {
     if (m_currentDir.isEmpty()) return;
 
-    // ... 省略参数赋值部分 (m_currentConfig.fs = ... 等等保持你原样即可) ...
     m_currentConfig.fs = m_editFs->text().toDouble();
     m_currentConfig.M = m_editM->text().toInt();
     m_currentConfig.d = m_editD->text().toDouble();
@@ -310,9 +309,16 @@ void MainWindow::onStartClicked() {
     m_currentConfig.azDetBgMult = m_editAzDetBgMult->text().toDouble();
     m_currentConfig.azDetSidelobeRatio = m_editAzDetSidelobeRatio->text().toDouble();
     m_currentConfig.azDetPeakMinDist = m_editAzDetPeakMinDist->text().toInt();
+
+    // 瞬时线谱参数
     m_currentConfig.lofarBgMedWindow = m_editLofarBgMedWindow->text().toInt();
     m_currentConfig.lofarSnrThreshMult = m_editLofarSnrThreshMult->text().toDouble();
     m_currentConfig.lofarPeakMinDist = m_editLofarPeakMinDist->text().toInt();
+    // [新增] 累积DCV线谱参数
+    m_currentConfig.dcvLofarBgMedWindow = m_editDcvLofarBgMedWindow->text().toInt();
+    m_currentConfig.dcvLofarSnrThreshMult = m_editDcvLofarSnrThreshMult->text().toDouble();
+    m_currentConfig.dcvLofarPeakMinDist = m_editDcvLofarPeakMinDist->text().toInt();
+
     m_currentConfig.firOrder = m_editFirOrder->text().toInt();
     m_currentConfig.firCutoff = m_editFirCutoff->text().toDouble();
     m_currentConfig.tpswG = m_editTpswG->text().toDouble();
@@ -324,7 +330,7 @@ void MainWindow::onStartClicked() {
     m_currentConfig.dpGamma = m_editDpGamma->text().toDouble();
     m_currentConfig.dcvRlIter = m_editDcvRlIter->text().toInt();
 
-    m_btnStart->setEnabled(false); m_btnSelectFiles->setEnabled(false); m_btnManualTruth->setEnabled(false); // 【更新】禁用状态
+    m_btnStart->setEnabled(false); m_btnSelectFiles->setEnabled(false); m_btnManualTruth->setEnabled(false);
     m_btnPauseResume->setEnabled(true); m_btnStop->setEnabled(true);
     m_mainTabWidget->setCurrentIndex(0);
     m_lblSysInfo->setText(QString("状态: 运行中\n开始时间: %1").arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
@@ -366,8 +372,12 @@ void MainWindow::onStartClicked() {
 
     m_worker->setDirectory(m_currentDir);
     m_worker->setConfig(m_currentConfig);
+
+    // 【新增】：将验证器中解析好的 JSON 真值传给后端 DspWorker
+        m_worker->setGroundTruths(m_validator->getTruthData());
     m_worker->start();
 }
+
 
 void MainWindow::onStopClicked() {
     if (m_worker->isRunning()) {
@@ -599,40 +609,28 @@ void MainWindow::setupUi() {
     QGroupBox* groupButtons = new QGroupBox("系统控制指令区", leftPanel);
     QVBoxLayout* btnLayout = new QVBoxLayout(groupButtons);
 
-    // 移除所有 Emoji 符号，使用标准系统图标
     m_btnSelectFiles = new QPushButton(" 数据文件输入...", this);
     m_btnSelectFiles->setIcon(style()->standardIcon(QStyle::SP_DirOpenIcon));
-
     m_btnManualTruth = new QPushButton(" 目标先验真值配置大厅...", this);
     m_btnManualTruth->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
-
     m_btnStart       = new QPushButton(" 开始算法处理", this);
     m_btnStart->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
-
     m_btnPauseResume = new QPushButton(" 暂停/继续", this);
     m_btnPauseResume->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
-
     m_btnStop        = new QPushButton(" 终止算法", this);
     m_btnStop->setIcon(style()->standardIcon(QStyle::SP_MediaStop));
-
     m_btnExport      = new QPushButton(" 导出文本报表", this);
     m_btnExport->setIcon(style()->standardIcon(QStyle::SP_DialogSaveButton));
 
-    m_btnStart->setEnabled(false);
-    m_btnPauseResume->setEnabled(false);
-    m_btnStop->setEnabled(false);
+    m_btnStart->setEnabled(false); m_btnPauseResume->setEnabled(false); m_btnStop->setEnabled(false);
 
-    btnLayout->addWidget(m_btnSelectFiles);
-    btnLayout->addWidget(m_btnManualTruth);
-    btnLayout->addWidget(m_btnStart);
-    btnLayout->addWidget(m_btnPauseResume);
-    btnLayout->addWidget(m_btnStop);
-    btnLayout->addWidget(m_btnExport);
+    btnLayout->addWidget(m_btnSelectFiles); btnLayout->addWidget(m_btnManualTruth);
+    btnLayout->addWidget(m_btnStart); btnLayout->addWidget(m_btnPauseResume);
+    btnLayout->addWidget(m_btnStop); btnLayout->addWidget(m_btnExport);
     leftLayout->addWidget(groupButtons);
 
     QScrollArea* paramScroll = new QScrollArea(leftPanel);
-    paramScroll->setWidgetResizable(true);
-    paramScroll->setFrameShape(QFrame::NoFrame);
+    paramScroll->setWidgetResizable(true); paramScroll->setFrameShape(QFrame::NoFrame);
     QWidget* paramContainer = new QWidget(paramScroll);
     QVBoxLayout* paramLayout = new QVBoxLayout(paramContainer);
     paramLayout->setContentsMargins(0,0,0,0);
@@ -665,12 +663,17 @@ void MainWindow::setupUi() {
     fAzDet->addRow("寻峰最小点距:", m_editAzDetPeakMinDist = new QLineEdit("3"));
     paramLayout->addWidget(gAzDet);
 
-    QGroupBox* gLofarExt = new QGroupBox("实时 LOFAR 线谱提取", paramContainer);
+    // ================== [重点修改区：加入DCV线谱参数] ==================
+    QGroupBox* gLofarExt = new QGroupBox("实时与累积线谱提取", paramContainer);
     QFormLayout* fLofarExt = new QFormLayout(gLofarExt);
-    fLofarExt->addRow("背景估计中值窗宽:", m_editLofarBgMedWindow = new QLineEdit("60"));
-    fLofarExt->addRow("SNR 阈值乘数:", m_editLofarSnrThreshMult = new QLineEdit("2.0"));
-    fLofarExt->addRow("寻峰最小点数间距:", m_editLofarPeakMinDist = new QLineEdit("15"));
+    fLofarExt->addRow("【瞬时】中值窗宽:", m_editLofarBgMedWindow = new QLineEdit("60"));
+    fLofarExt->addRow("【瞬时】SNR 乘数:", m_editLofarSnrThreshMult = new QLineEdit("2.0"));
+    fLofarExt->addRow("【瞬时】最小点距:", m_editLofarPeakMinDist = new QLineEdit("15"));
+    fLofarExt->addRow("【DCV累积】中值窗宽:", m_editDcvLofarBgMedWindow = new QLineEdit("150"));
+    fLofarExt->addRow("【DCV累积】SNR乘数:", m_editDcvLofarSnrThreshMult = new QLineEdit("4.0"));
+    fLofarExt->addRow("【DCV累积】最小点距:", m_editDcvLofarPeakMinDist = new QLineEdit("180"));
     paramLayout->addWidget(gLofarExt);
+    // =================================================================
 
     QGroupBox* gDemon = new QGroupBox("DEMON 包络数字滤波", paramContainer);
     QFormLayout* fDemon = new QFormLayout(gDemon);
@@ -803,25 +806,18 @@ void MainWindow::setupUi() {
     QVBoxLayout* tab2ContainerLayout = new QVBoxLayout(tab2Container);
 
     QSplitter* waterfallsSplitter = new QSplitter(Qt::Horizontal, tab2Container);
-
     m_cbfWaterfallPlot = new QCustomPlot(waterfallsSplitter);
-    m_cbfWaterfallPlot->setMinimumSize(300, 400);
-    setupPlotInteraction(m_cbfWaterfallPlot);
-    m_cbfWaterfallPlot->plotLayout()->insertRow(0);
-    m_cbfWaterfallPlot->plotLayout()->addElement(0, 0, new QCPTextElement(m_cbfWaterfallPlot, "常规波束形成(CBF) 空间谱历程", QFont("sans", 12, QFont::Bold)));
+    m_cbfWaterfallPlot->setMinimumSize(300, 400); setupPlotInteraction(m_cbfWaterfallPlot);
+    m_cbfWaterfallPlot->plotLayout()->insertRow(0); m_cbfWaterfallPlot->plotLayout()->addElement(0, 0, new QCPTextElement(m_cbfWaterfallPlot, "常规波束形成(CBF) 空间谱历程", QFont("sans", 12, QFont::Bold)));
     waterfallsSplitter->addWidget(m_cbfWaterfallPlot);
 
     m_dcvWaterfallPlot = new QCustomPlot(waterfallsSplitter);
-    m_dcvWaterfallPlot->setMinimumSize(300, 400);
-    setupPlotInteraction(m_dcvWaterfallPlot);
-    m_dcvWaterfallPlot->plotLayout()->insertRow(0);
-    m_dcvWaterfallPlot->plotLayout()->addElement(0, 0, new QCPTextElement(m_dcvWaterfallPlot, "高分辨反卷积(DCV) 全方位时空谱历程", QFont("sans", 12, QFont::Bold)));
+    m_dcvWaterfallPlot->setMinimumSize(300, 400); setupPlotInteraction(m_dcvWaterfallPlot);
+    m_dcvWaterfallPlot->plotLayout()->insertRow(0); m_dcvWaterfallPlot->plotLayout()->addElement(0, 0, new QCPTextElement(m_dcvWaterfallPlot, "高分辨反卷积(DCV) 全方位时空谱历程", QFont("sans", 12, QFont::Bold)));
     waterfallsSplitter->addWidget(m_dcvWaterfallPlot);
 
-    waterfallsSplitter->setStretchFactor(0, 1);
-    waterfallsSplitter->setStretchFactor(1, 1);
+    waterfallsSplitter->setStretchFactor(0, 1); waterfallsSplitter->setStretchFactor(1, 1);
     waterfallsSplitter->setSizes(QList<int>() << 1000 << 1000);
-
     tab2ContainerLayout->addWidget(waterfallsSplitter);
 
     m_sliceWidget = new QWidget(tab2Container);
@@ -831,7 +827,7 @@ void MainWindow::setupUi() {
 
     tab2Scroll->setWidget(tab2Container);
     tab2MainLayout->addWidget(tab2Scroll);
-    m_mainTabWidget->addTab(tab2, "实时处理: 空间方位谱全景与切片");
+    m_mainTabWidget->addTab(tab2, "后处理: 空间方位谱全景与切片");
 
     // ================== TAB 3 ==================
     QWidget* tab3 = new QWidget();
@@ -845,7 +841,7 @@ void MainWindow::setupUi() {
     tab3Layout->addWidget(lofarScroll);
     m_mainTabWidget->addTab(tab3, "后处理: 深度解耦与DP特征提取");
 
-    // ================== TAB 4 (全新品字形结构) ==================
+    // ================== TAB 4 ==================
     QWidget* tab4 = new QWidget();
     QVBoxLayout* tab4Layout = new QVBoxLayout(tab4);
     tab4->setStyleSheet("QWidget { background-color: #f4f6f9; }");
@@ -853,9 +849,7 @@ void MainWindow::setupUi() {
     QWidget* cardsWidget = new QWidget(tab4);
     QHBoxLayout* cardsLayout = new QHBoxLayout(cardsWidget);
     cardsLayout->setContentsMargins(0, 0, 0, 0);
-    m_lblStatTime = new QLabel("--");
-    m_lblStatTargets = new QLabel("--");
-    m_lblStatAvgAcc = new QLabel("--");
+    m_lblStatTime = new QLabel("--"); m_lblStatTargets = new QLabel("--"); m_lblStatAvgAcc = new QLabel("--");
     cardsLayout->addWidget(createCardWidget(m_lblStatTime, "#ffffff", "系统全流程解算耗时分布"));
     cardsLayout->addWidget(createCardWidget(m_lblStatTargets, "#ffffff", "稳定识别/锁定目标总数"));
     cardsLayout->addWidget(createCardWidget(m_lblStatAvgAcc, "#ffffff", "全局平均线谱提取正确率"));
@@ -864,62 +858,48 @@ void MainWindow::setupUi() {
     QSplitter* tab4ContentSplitter = new QSplitter(Qt::Vertical, tab4);
 
     m_tableTargetFeatures = new QTableWidget(tab4ContentSplitter);
-    m_tableTargetFeatures->setColumnCount(7);
-    m_tableTargetFeatures->setHorizontalHeaderLabels({"目标 ID", "提取线谱群", "线谱正确率", "稳定中心轴频", "真实方位", "系统解算方位", "综合判定"});
+    // ========================================================
+    // 【修改点：将表格拓展为 9 列】
+    // ========================================================
+    m_tableTargetFeatures->setColumnCount(9);
+    m_tableTargetFeatures->setHorizontalHeaderLabels({"目标 ID", "瞬时线谱群", "瞬时准度", "累积DCV线谱", "DCV准度", "稳定轴频", "真实方位", "解算方位", "综合判定"});
     m_tableTargetFeatures->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
-    m_tableTargetFeatures->horizontalHeader()->setStretchLastSection(true);
-    m_tableTargetFeatures->setColumnWidth(0, 70);
-    m_tableTargetFeatures->setColumnWidth(1, 230);
-    m_tableTargetFeatures->setColumnWidth(2, 90);
-    m_tableTargetFeatures->setColumnWidth(3, 100);
-    m_tableTargetFeatures->setColumnWidth(4, 90);
-    m_tableTargetFeatures->setColumnWidth(5, 90);
+    m_tableTargetFeatures->horizontalHeader()->setStretchLastSection(false);
+    m_tableTargetFeatures->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    m_tableTargetFeatures->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch); // 瞬时线谱占宽
+    m_tableTargetFeatures->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_tableTargetFeatures->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch); // DCV线谱也占宽
+    m_tableTargetFeatures->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+    m_tableTargetFeatures->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
+    m_tableTargetFeatures->horizontalHeader()->setSectionResizeMode(6, QHeaderView::ResizeToContents);
+    m_tableTargetFeatures->horizontalHeader()->setSectionResizeMode(7, QHeaderView::ResizeToContents);
+    m_tableTargetFeatures->horizontalHeader()->setSectionResizeMode(8, QHeaderView::ResizeToContents);
     m_tableTargetFeatures->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_tableTargetFeatures->setAlternatingRowColors(true);
-    m_tableTargetFeatures->setStyleSheet("QTableWidget { background-color: white; border-radius: 8px; }"
-                                         "QHeaderView::section { background-color: #0078d7; color: white; font-weight: bold; border: none; padding: 6px; }");
+    m_tableTargetFeatures->setStyleSheet("QTableWidget { background-color: white; border-radius: 8px; } QHeaderView::section { background-color: #0078d7; color: white; font-weight: bold; border: none; padding: 6px; }");
     tab4ContentSplitter->addWidget(m_tableTargetFeatures);
 
     QSplitter* bottomPlotsSplitter = new QSplitter(Qt::Horizontal, tab4ContentSplitter);
-
     m_plotTargetAccuracy = new QCustomPlot(bottomPlotsSplitter);
-    m_plotTargetAccuracy->setMinimumSize(300, 200);
-    m_plotTargetAccuracy->setStyleSheet("background-color: white; border-radius: 8px;");
-    m_plotTargetAccuracy->plotLayout()->insertRow(0);
-    m_plotTargetAccuracy->plotLayout()->addElement(0, 0, new QCPTextElement(m_plotTargetAccuracy, "各独立目标特征提取正确率", QFont("sans", 12, QFont::Bold)));
+    m_plotTargetAccuracy->setMinimumSize(300, 200); m_plotTargetAccuracy->setStyleSheet("background-color: white; border-radius: 8px;");
+    m_plotTargetAccuracy->plotLayout()->insertRow(0); m_plotTargetAccuracy->plotLayout()->addElement(0, 0, new QCPTextElement(m_plotTargetAccuracy, "各独立目标特征提取正确率", QFont("sans", 12, QFont::Bold)));
     m_accuracyBars = new QCPBars(m_plotTargetAccuracy->xAxis, m_plotTargetAccuracy->yAxis);
-    m_accuracyBars->setPen(QPen(Qt::NoPen));
-    m_accuracyBars->setBrush(QColor(52, 152, 219));
-    m_plotTargetAccuracy->xAxis->setLabel("目标编号");
-    m_plotTargetAccuracy->yAxis->setLabel("正确率 (%)");
-    m_plotTargetAccuracy->yAxis->setRange(0, 105);
+    m_accuracyBars->setPen(QPen(Qt::NoPen)); m_accuracyBars->setBrush(QColor(52, 152, 219));
+    m_plotTargetAccuracy->xAxis->setLabel("目标编号"); m_plotTargetAccuracy->yAxis->setLabel("正确率 (%)"); m_plotTargetAccuracy->yAxis->setRange(0, 105);
     setupPlotInteraction(m_plotTargetAccuracy);
     bottomPlotsSplitter->addWidget(m_plotTargetAccuracy);
 
     m_plotBatchAccuracy = new QCustomPlot(bottomPlotsSplitter);
-    m_plotBatchAccuracy->setMinimumSize(300, 200);
-    m_plotBatchAccuracy->setStyleSheet("background-color: white; border-radius: 8px;");
-    m_plotBatchAccuracy->plotLayout()->insertRow(0);
-    m_plotBatchAccuracy->plotLayout()->addElement(0, 0, new QCPTextElement(m_plotBatchAccuracy, "连续监测周期(批次)综合正确率走势", QFont("sans", 12, QFont::Bold)));
-    m_plotBatchAccuracy->addGraph();
-    m_plotBatchAccuracy->graph(0)->setPen(QPen(QColor(46, 204, 113), 3));
+    m_plotBatchAccuracy->setMinimumSize(300, 200); m_plotBatchAccuracy->setStyleSheet("background-color: white; border-radius: 8px;");
+    m_plotBatchAccuracy->plotLayout()->insertRow(0); m_plotBatchAccuracy->plotLayout()->addElement(0, 0, new QCPTextElement(m_plotBatchAccuracy, "连续监测周期(批次)综合正确率走势", QFont("sans", 12, QFont::Bold)));
+    m_plotBatchAccuracy->addGraph(); m_plotBatchAccuracy->graph(0)->setPen(QPen(QColor(46, 204, 113), 3));
     m_plotBatchAccuracy->graph(0)->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssCircle, QColor(46, 204, 113), Qt::white, 8));
-    m_plotBatchAccuracy->xAxis->setLabel("运算监测批次");
-    m_plotBatchAccuracy->yAxis->setLabel("批次综合正确率 (%)");
-    m_plotBatchAccuracy->yAxis->setRange(0, 105);
+    m_plotBatchAccuracy->xAxis->setLabel("运算监测批次"); m_plotBatchAccuracy->yAxis->setLabel("批次综合正确率 (%)"); m_plotBatchAccuracy->yAxis->setRange(0, 105);
     setupPlotInteraction(m_plotBatchAccuracy);
     bottomPlotsSplitter->addWidget(m_plotBatchAccuracy);
 
-    bottomPlotsSplitter->setStretchFactor(0, 1);
-    bottomPlotsSplitter->setStretchFactor(1, 1);
-    bottomPlotsSplitter->setSizes(QList<int>() << 1000 << 1000);
-
     tab4ContentSplitter->addWidget(bottomPlotsSplitter);
-
-    tab4ContentSplitter->setStretchFactor(0, 1);
-    tab4ContentSplitter->setStretchFactor(1, 1);
-    tab4ContentSplitter->setSizes(QList<int>() << 1000 << 1000);
-
+    tab4ContentSplitter->setStretchFactor(0, 1); tab4ContentSplitter->setStretchFactor(1, 1);
     tab4Layout->addWidget(tab4ContentSplitter);
     m_mainTabWidget->addTab(tab4, "系统效能与指标验收评估");
 
@@ -927,51 +907,41 @@ void MainWindow::setupUi() {
     // 底部：评估报告终端
     // ==========================================
     verticalSplitter->addWidget(topWidget);
-
     QGroupBox* groupReport = new QGroupBox("综合处理评估报告终端", verticalSplitter);
     QVBoxLayout* reportLayout = new QVBoxLayout(groupReport);
     m_reportConsole = new QPlainTextEdit(this);
-    m_reportConsole->setReadOnly(true);
-    m_reportConsole->setStyleSheet("background-color: #2b2b2b; color: #ffaa00; font-family: Consolas; font-size: 13px;");
+    m_reportConsole->setReadOnly(true); m_reportConsole->setStyleSheet("background-color: #2b2b2b; color: #ffaa00; font-family: Consolas; font-size: 13px;");
     reportLayout->addWidget(m_reportConsole);
-
     verticalSplitter->addWidget(groupReport);
-    verticalSplitter->setStretchFactor(0, 4);
-    verticalSplitter->setStretchFactor(1, 1);
+    verticalSplitter->setStretchFactor(0, 4); verticalSplitter->setStretchFactor(1, 1);
 
     QWidget* cornerWidget = new QWidget(m_mainTabWidget);
     QHBoxLayout* cornerLayout = new QHBoxLayout(cornerWidget);
-    cornerLayout->setContentsMargins(0, 0, 0, 0);
-    cornerLayout->setSpacing(8);
+    cornerLayout->setContentsMargins(0, 0, 0, 0); cornerLayout->setSpacing(8);
 
     QPushButton* toggleBottomBtn = new QPushButton("▼ 隐藏报告栏", cornerWidget);
-    toggleBottomBtn->setCheckable(true);
-    toggleBottomBtn->setCursor(Qt::PointingHandCursor);
+    toggleBottomBtn->setCheckable(true); toggleBottomBtn->setCursor(Qt::PointingHandCursor);
     toggleBottomBtn->setStyleSheet("QPushButton { border: none; padding: 4px 10px; color: #2c3e50; font-weight: bold; } QPushButton:hover { color: #2980b9; }");
     connect(toggleBottomBtn, &QPushButton::toggled, this, [groupReport, toggleBottomBtn](bool checked){
-        groupReport->setVisible(!checked);
-        toggleBottomBtn->setText(checked ? "▲ 展开报告栏" : "▼ 隐藏报告栏");
+        groupReport->setVisible(!checked); toggleBottomBtn->setText(checked ? "▲ 展开报告栏" : "▼ 隐藏报告栏");
     });
 
     QPushButton* toggleRightBtn = new QPushButton("隐藏终端栏 ▶", cornerWidget);
-    toggleRightBtn->setCheckable(true);
-    toggleRightBtn->setCursor(Qt::PointingHandCursor);
+    toggleRightBtn->setCheckable(true); toggleRightBtn->setCursor(Qt::PointingHandCursor);
     toggleRightBtn->setStyleSheet("QPushButton { border: none; padding: 4px 10px; color: #2c3e50; font-weight: bold; } QPushButton:hover { color: #2980b9; }");
     connect(toggleRightBtn, &QPushButton::toggled, this, [rightSidePanel, toggleRightBtn](bool checked){
-        rightSidePanel->setVisible(!checked);
-        toggleRightBtn->setText(checked ? "◀ 展开终端栏" : "隐藏终端栏 ▶");
+        rightSidePanel->setVisible(!checked); toggleRightBtn->setText(checked ? "◀ 展开终端栏" : "隐藏终端栏 ▶");
     });
 
-    cornerLayout->addWidget(toggleBottomBtn);
-    cornerLayout->addWidget(toggleRightBtn);
+    cornerLayout->addWidget(toggleBottomBtn); cornerLayout->addWidget(toggleRightBtn);
     m_mainTabWidget->setCornerWidget(cornerWidget, Qt::TopRightCorner);
 
     mainVLayout->addWidget(verticalSplitter);
-
     setCentralWidget(centralWidget);
     resize(1600, 1000);
     setWindowTitle("SonarTracker715 - 宽带方位动态跟踪与解耦系统");
 }
+
 void MainWindow::onSelectFilesClicked() {
     QString dir = QFileDialog::getExistingDirectory(this, "选择数据根目录", "");
     if (dir.isEmpty()) return;
@@ -1334,11 +1304,7 @@ void MainWindow::updateTab2Plots() {
     double max_time = m_historyResults.last().timestamp;
     if (std::abs(max_time - min_time) < 0.1) max_time = min_time + 3.0;
 
-    // ==============================================================
-    // 1. 瀑布图：复用现有的 QCPColorMap，避免 clearPlottables 导致闪烁
-    // ==============================================================
     int nx_uniform = 361;
-
     QCPColorMap *cmapCbf = nullptr;
     if (m_cbfWaterfallPlot->plottableCount() > 0) cmapCbf = qobject_cast<QCPColorMap*>(m_cbfWaterfallPlot->plottable(0));
     if (!cmapCbf) cmapCbf = new QCPColorMap(m_cbfWaterfallPlot->xAxis, m_cbfWaterfallPlot->yAxis);
@@ -1363,7 +1329,6 @@ void MainWindow::updateTab2Plots() {
         for (int x = 0; x < nx_uniform; ++x) {
             double target_theta = x * 0.5;
             double v_cbf = -120.0, v_dcv = -120.0;
-
             if (theta_arr.size() > 1) {
                 if (target_theta <= theta_arr.first()) { v_cbf = cbf_arr.first(); v_dcv = dcv_arr.first(); }
                 else if (target_theta >= theta_arr.last()) { v_cbf = cbf_arr.last(); v_dcv = dcv_arr.last(); }
@@ -1390,76 +1355,51 @@ void MainWindow::updateTab2Plots() {
         }
     }
 
-    cmapCbf->setGradient(QCPColorGradient::gpJet);
-    cmapCbf->setInterpolate(true);
-    cmapCbf->setDataRange(QCPRange(cbf_max - 20.0, cbf_max));
-    cmapCbf->setTightBoundary(true);
-    m_cbfWaterfallPlot->xAxis->setLabel("方位角/°");
-    m_cbfWaterfallPlot->yAxis->setLabel("物理时间/s");
-    m_cbfWaterfallPlot->xAxis->setRange(0, 180);
-    m_cbfWaterfallPlot->yAxis->setRange(min_time, max_time);
-    m_cbfWaterfallPlot->replot();
-    updatePlotOriginalRange(m_cbfWaterfallPlot);
+    cmapCbf->setGradient(QCPColorGradient::gpJet); cmapCbf->setInterpolate(true);
+    cmapCbf->setDataRange(QCPRange(cbf_max - 20.0, cbf_max)); cmapCbf->setTightBoundary(true);
+    m_cbfWaterfallPlot->xAxis->setLabel("方位角/°"); m_cbfWaterfallPlot->yAxis->setLabel("物理时间/s");
+    m_cbfWaterfallPlot->xAxis->setRange(0, 180); m_cbfWaterfallPlot->yAxis->setRange(min_time, max_time);
+    m_cbfWaterfallPlot->replot(); updatePlotOriginalRange(m_cbfWaterfallPlot);
 
-    cmapDcv->setGradient(QCPColorGradient::gpJet);
-    cmapDcv->setInterpolate(true);
-    cmapDcv->setDataRange(QCPRange(dcv_max - 35.0, dcv_max));
-    cmapDcv->setTightBoundary(true);
-    m_dcvWaterfallPlot->xAxis->setLabel("方位角/°");
-    m_dcvWaterfallPlot->yAxis->setLabel("物理时间/s");
-    m_dcvWaterfallPlot->xAxis->setRange(0, 180);
-    m_dcvWaterfallPlot->yAxis->setRange(min_time, max_time);
-    m_dcvWaterfallPlot->replot();
-    updatePlotOriginalRange(m_dcvWaterfallPlot);
+    cmapDcv->setGradient(QCPColorGradient::gpJet); cmapDcv->setInterpolate(true);
+    cmapDcv->setDataRange(QCPRange(dcv_max - 35.0, dcv_max)); cmapDcv->setTightBoundary(true);
+    m_dcvWaterfallPlot->xAxis->setLabel("方位角/°"); m_dcvWaterfallPlot->yAxis->setLabel("物理时间/s");
+    m_dcvWaterfallPlot->xAxis->setRange(0, 180); m_dcvWaterfallPlot->yAxis->setRange(min_time, max_time);
+    m_dcvWaterfallPlot->replot(); updatePlotOriginalRange(m_dcvWaterfallPlot);
 
-    // ==============================================================
-    // 2. 切片图：使用 objectName 动态复用 QCustomPlot 组件，彻底解决实时刷新的严重闪烁
-    // ==============================================================
     QSet<int> targetIds;
     for (const auto& frame : m_historyResults) {
         for (const auto& tr : frame.tracks) {
             if (tr.isConfirmed) targetIds.insert(tr.id);
         }
     }
+    QList<int> sortedIds = targetIds.values(); std::sort(sortedIds.begin(), sortedIds.end());
 
-    QList<int> sortedIds = targetIds.values();
-    std::sort(sortedIds.begin(), sortedIds.end());
-
-    // 清理那些已经丢失/消失目标的旧图表
     QList<QCustomPlot*> allPlots = m_sliceWidget->findChildren<QCustomPlot*>();
     for (QCustomPlot* plot : allPlots) {
         QString objName = plot->objectName();
         if (objName.startsWith("slice_")) {
             int plotTid = objName.split("_").last().toInt();
-            if (!targetIds.contains(plotTid)) {
-                m_sliceLayout->removeWidget(plot);
-                plot->deleteLater();
-            }
+            if (!targetIds.contains(plotTid)) { m_sliceLayout->removeWidget(plot); plot->deleteLater(); }
         }
     }
 
     int col = 0;
     for (int tid : sortedIds) {
-        int active_frames = 0;
-        double sum_ang = 0.0;
-
-        QVector<double> slice_cbf_sum;
-        QVector<double> slice_dcv_sum;
+        int active_frames = 0; double sum_ang = 0.0;
+        QVector<double> slice_cbf_sum; QVector<double> slice_dcv_sum;
 
         for (const auto& frame : m_historyResults) {
             for (const auto& tr : frame.tracks) {
                 if (tr.id == tid && tr.isActive && !tr.lofarFullLinear.isEmpty() && !tr.cbfLofarFullLinear.isEmpty()) {
                     if (slice_dcv_sum.isEmpty()) {
-                        slice_cbf_sum.resize(tr.cbfLofarFullLinear.size());
-                        slice_dcv_sum.resize(tr.lofarFullLinear.size());
+                        slice_cbf_sum.resize(tr.cbfLofarFullLinear.size()); slice_dcv_sum.resize(tr.lofarFullLinear.size());
                         slice_cbf_sum.fill(0.0); slice_dcv_sum.fill(0.0);
                     }
                     for(int i=0; i<slice_dcv_sum.size(); ++i) {
-                        slice_cbf_sum[i] += tr.cbfLofarFullLinear[i];
-                        slice_dcv_sum[i] += tr.lofarFullLinear[i];
+                        slice_cbf_sum[i] += tr.cbfLofarFullLinear[i]; slice_dcv_sum[i] += tr.lofarFullLinear[i];
                     }
-                    sum_ang += tr.currentAngle;
-                    active_frames++;
+                    sum_ang += tr.currentAngle; active_frames++;
                     break;
                 }
             }
@@ -1467,85 +1407,78 @@ void MainWindow::updateTab2Plots() {
 
         if (active_frames > 0 && !slice_dcv_sum.isEmpty()) {
             double avg_ang = sum_ang / active_frames;
-
             std::vector<double> v_cbf(slice_cbf_sum.size()), v_dcv(slice_dcv_sum.size());
             for(int i=0; i<slice_dcv_sum.size(); ++i) {
-                v_cbf[i] = slice_cbf_sum[i] / active_frames;
-                v_dcv[i] = slice_dcv_sum[i] / active_frames;
+                v_cbf[i] = slice_cbf_sum[i] / active_frames; v_dcv[i] = slice_dcv_sum[i] / active_frames;
             }
-
             double max_cbf = *std::max_element(v_cbf.begin(), v_cbf.end());
             double max_dcv = *std::max_element(v_dcv.begin(), v_dcv.end());
 
-            QVector<double> f_axis(v_dcv.size());
-            QVector<double> cbf_db(v_cbf.size());
-            QVector<double> dcv_db(v_dcv.size());
-
+            QVector<double> f_axis(v_dcv.size()); QVector<double> cbf_db(v_cbf.size()); QVector<double> dcv_db(v_dcv.size());
             double df_calc = (v_dcv.size() > 1) ? (m_currentConfig.fs / 2.0) / (v_dcv.size() - 1) : 1.0;
             for(int i=0; i<v_dcv.size(); ++i) {
                 f_axis[i] = i * df_calc;
-                double d_val = 10.0 * std::log10(v_dcv[i] / (max_dcv + 1e-12) + 1e-12);
-                double c_val = 10.0 * std::log10(v_cbf[i] / (max_cbf + 1e-12) + 1e-12);
-                dcv_db[i] = std::max(-80.0, d_val);
-                cbf_db[i] = std::max(-80.0, c_val);
+                dcv_db[i] = std::max(-80.0, 10.0 * std::log10(v_dcv[i] / (max_dcv + 1e-12) + 1e-12));
+                cbf_db[i] = std::max(-80.0, 10.0 * std::log10(v_cbf[i] / (max_cbf + 1e-12) + 1e-12));
             }
 
-            // --- 动态获取或创建 CBF Plot ---
             QString cbfName = QString("slice_cbf_%1").arg(tid);
             QCustomPlot* pCbf = m_sliceWidget->findChild<QCustomPlot*>(cbfName);
             if (!pCbf) {
-                pCbf = new QCustomPlot(m_sliceWidget);
-                pCbf->setObjectName(cbfName);
-                setupPlotInteraction(pCbf);
-                pCbf->setMinimumSize(400, 250);
-                pCbf->addGraph(); pCbf->graph(0)->setPen(QPen(Qt::gray, 2.0));
-                pCbf->plotLayout()->insertRow(0);
-                pCbf->plotLayout()->addElement(0, 0, new QCPTextElement(pCbf, "", QFont("sans", 10, QFont::Bold)));
-                pCbf->xAxis->setRange(m_currentConfig.lofarMin, m_currentConfig.lofarMax);
-                pCbf->yAxis->setRange(-80, 5);
-                pCbf->xAxis->setVisible(false);
-                m_sliceLayout->addWidget(pCbf, 0, col);
+                pCbf = new QCustomPlot(m_sliceWidget); pCbf->setObjectName(cbfName); setupPlotInteraction(pCbf);
+                pCbf->setMinimumSize(400, 250); pCbf->addGraph(); pCbf->graph(0)->setPen(QPen(Qt::gray, 2.0));
+                pCbf->plotLayout()->insertRow(0); pCbf->plotLayout()->addElement(0, 0, new QCPTextElement(pCbf, "", QFont("sans", 10, QFont::Bold)));
+                pCbf->xAxis->setRange(m_currentConfig.lofarMin, m_currentConfig.lofarMax); pCbf->yAxis->setRange(-80, 5);
+                pCbf->xAxis->setVisible(false); m_sliceLayout->addWidget(pCbf, 0, col);
             }
-
             pCbf->graph(0)->setData(f_axis, cbf_db);
-            if (auto* title = qobject_cast<QCPTextElement*>(pCbf->plotLayout()->element(0, 0))) {
-                title->setText(QString("目标%1 (约 %2°) - CBF").arg(tid).arg(avg_ang, 0, 'f', 1));
-            }
-            if (col == 0) pCbf->yAxis->setLabel("相对功率 / dB");
-            else pCbf->yAxis->setLabel("");
-            pCbf->replot();
-            updatePlotOriginalRange(pCbf);
+            if (auto* title = qobject_cast<QCPTextElement*>(pCbf->plotLayout()->element(0, 0))) title->setText(QString("目标%1 (约 %2°) - CBF").arg(tid).arg(avg_ang, 0, 'f', 1));
+            pCbf->yAxis->setLabel(col == 0 ? "相对功率 / dB" : ""); pCbf->replot(); updatePlotOriginalRange(pCbf);
 
-            // --- 动态获取或创建 DCV Plot ---
             QString dcvName = QString("slice_dcv_%1").arg(tid);
             QCustomPlot* pDcv = m_sliceWidget->findChild<QCustomPlot*>(dcvName);
             if (!pDcv) {
-                pDcv = new QCustomPlot(m_sliceWidget);
-                pDcv->setObjectName(dcvName);
-                setupPlotInteraction(pDcv);
-                pDcv->setMinimumSize(400, 250);
-                pDcv->addGraph(); pDcv->graph(0)->setPen(QPen(Qt::red, 1.5));
-                pDcv->plotLayout()->insertRow(0);
-                pDcv->plotLayout()->addElement(0, 0, new QCPTextElement(pDcv, "", QFont("sans", 10, QFont::Bold)));
-                pDcv->xAxis->setRange(m_currentConfig.lofarMin, m_currentConfig.lofarMax);
-                pDcv->yAxis->setRange(-80, 5);
-                pDcv->xAxis->setLabel("频率 / Hz");
-                m_sliceLayout->addWidget(pDcv, 1, col);
+                pDcv = new QCustomPlot(m_sliceWidget); pDcv->setObjectName(dcvName); setupPlotInteraction(pDcv);
+                pDcv->setMinimumSize(400, 250); pDcv->addGraph(); pDcv->graph(0)->setPen(QPen(Qt::red, 1.5));
+                pDcv->plotLayout()->insertRow(0); pDcv->plotLayout()->addElement(0, 0, new QCPTextElement(pDcv, "", QFont("sans", 10, QFont::Bold)));
+                pDcv->xAxis->setRange(m_currentConfig.lofarMin, m_currentConfig.lofarMax); pDcv->yAxis->setRange(-80, 5);
+                pDcv->xAxis->setLabel("频率 / Hz"); m_sliceLayout->addWidget(pDcv, 1, col);
             }
-
             pDcv->graph(0)->setData(f_axis, dcv_db);
-            if (auto* title = qobject_cast<QCPTextElement*>(pDcv->plotLayout()->element(0, 0))) {
-                title->setText(QString("目标%1 (约 %2°) - DCV").arg(tid).arg(avg_ang, 0, 'f', 1));
+
+            // ========================================================
+            // 【新增】：在 DCV 上画出累积提取的蓝点线谱
+            // ========================================================
+            if (pDcv->graphCount() < 2) {
+                pDcv->addGraph();
+                pDcv->graph(1)->setLineStyle(QCPGraph::lsNone);
+                pDcv->graph(1)->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssCircle, Qt::blue, Qt::white, 6));
             }
-            if (col == 0) pDcv->yAxis->setLabel("相对功率 / dB");
-            else pDcv->yAxis->setLabel("");
-            pDcv->replot();
-            updatePlotOriginalRange(pDcv);
+            QVector<double> peakF, peakA;
+            const TargetTrack* lastTr = nullptr;
+            for(int k=m_historyResults.size()-1; k>=0; --k) {
+                for(const auto& tr : m_historyResults[k].tracks) {
+                    if (tr.id == tid) { lastTr = &tr; break; }
+                }
+                if (lastTr) break;
+            }
+            if (lastTr && !lastTr->lineSpectraDcv.empty()) {
+                for(double f : lastTr->lineSpectraDcv) {
+                    int bin = std::round(f / df_calc);
+                    if(bin >= 0 && bin < dcv_db.size()) { peakF.append(f); peakA.append(dcv_db[bin]); }
+                }
+            }
+            pDcv->graph(1)->setData(peakF, peakA);
+            // ========================================================
+
+            if (auto* title = qobject_cast<QCPTextElement*>(pDcv->plotLayout()->element(0, 0))) title->setText(QString("目标%1 (约 %2°) - DCV").arg(tid).arg(avg_ang, 0, 'f', 1));
+            pDcv->yAxis->setLabel(col == 0 ? "相对功率 / dB" : ""); pDcv->replot(); updatePlotOriginalRange(pDcv);
 
             col++;
         }
     }
 }
+
 void MainWindow::onBatchAccuracyComputed(int batchIndex, double accuracy) {
     m_batchAccuracies.append(qMakePair(batchIndex, accuracy));
 
@@ -1587,123 +1520,111 @@ void MainWindow::onEvaluationResultReady(const SystemEvaluationResult& result) {
     QString timeHtml = QString(
         "<span style='font-size:32px; color:#e74c3c;'>%1 s</span><br>"
         "<span style='font-size:14px; color:#95a5a6;'>▷ 实时: %2 s | ▷ 离线寻优: %3 s</span>")
-        .arg(result.totalTimeSec, 0, 'f', 2)
-        .arg(result.realtimeTimeSec, 0, 'f', 2)
-        .arg(result.batchTimeSec, 0, 'f', 2);
+        .arg(result.totalTimeSec, 0, 'f', 2).arg(result.realtimeTimeSec, 0, 'f', 2).arg(result.batchTimeSec, 0, 'f', 2);
     m_lblStatTime->setText(timeHtml);
-
     m_lblStatTargets->setText(QString("<span style='font-size:36px; color:#2980b9;'>%1</span> 艘").arg(result.confirmedTargetCount));
 
     m_tableTargetFeatures->setRowCount(result.targetEvals.size());
-    QVector<double> barPositions, barValues;
+    QVector<double> barPositions, barValuesInst, barValuesDcv;
     QSharedPointer<QCPAxisTickerText> textTicker(new QCPAxisTickerText);
 
-    double totalAcc = 0.0;
-    int validAccCount = 0;
+    double totalAccInst = 0.0; int validAccInstCount = 0;
+    double totalAccDcv = 0.0; int validAccDcvCount = 0;
 
     for (int i = 0; i < result.targetEvals.size(); ++i) {
         const TargetEvaluation& t = result.targetEvals[i];
 
         QTableWidgetItem* idItem = new QTableWidgetItem(QString("Target %1").arg(t.targetId));
-        idItem->setTextAlignment(Qt::AlignCenter);
-        m_tableTargetFeatures->setItem(i, 0, idItem);
+        idItem->setTextAlignment(Qt::AlignCenter); m_tableTargetFeatures->setItem(i, 0, idItem);
 
-        // 【优化】：为线谱群增加 ToolTip，防止特征太多被截断时看不全
         QTableWidgetItem* spectraItem = new QTableWidgetItem(t.lineSpectraStr);
-        spectraItem->setToolTip(t.lineSpectraStr);
-        m_tableTargetFeatures->setItem(i, 1, spectraItem);
+        spectraItem->setToolTip(t.lineSpectraStr); m_tableTargetFeatures->setItem(i, 1, spectraItem);
 
         QTableWidgetItem* accItem = new QTableWidgetItem(QString("%1 %").arg(t.accuracy, 0, 'f', 2));
         accItem->setTextAlignment(Qt::AlignCenter);
-        if (t.accuracy < 90.0) accItem->setForeground(QBrush(Qt::red));
-        else accItem->setForeground(QBrush(QColor(39, 174, 96)));
+        accItem->setForeground(QBrush((t.accuracy < 90.0) ? Qt::red : QColor(39, 174, 96)));
         m_tableTargetFeatures->setItem(i, 2, accItem);
 
-        QTableWidgetItem* shaftItem = new QTableWidgetItem(t.shaftFreq > 0 ? QString("%1 Hz").arg(t.shaftFreq, 0, 'f', 1) : "未锁定");
-        shaftItem->setTextAlignment(Qt::AlignCenter);
-        m_tableTargetFeatures->setItem(i, 3, shaftItem);
+        QTableWidgetItem* spectraDcvItem = new QTableWidgetItem(t.lineSpectraStrDcv);
+        spectraDcvItem->setToolTip(t.lineSpectraStrDcv); m_tableTargetFeatures->setItem(i, 3, spectraDcvItem);
 
-        // 回溯查找该目标最后一次稳定跟踪的解算方位
+        QTableWidgetItem* accDcvItem = new QTableWidgetItem(QString("%1 %").arg(t.accuracyDcv, 0, 'f', 2));
+        accDcvItem->setTextAlignment(Qt::AlignCenter);
+        accDcvItem->setForeground(QBrush((t.accuracyDcv < 90.0) ? Qt::red : QColor(39, 174, 96)));
+        m_tableTargetFeatures->setItem(i, 4, accDcvItem);
+
+        QTableWidgetItem* shaftItem = new QTableWidgetItem(t.shaftFreq > 0 ? QString("%1 Hz").arg(t.shaftFreq, 0, 'f', 1) : "未锁定");
+        shaftItem->setTextAlignment(Qt::AlignCenter); m_tableTargetFeatures->setItem(i, 5, shaftItem);
+
         double finalAngle = 0.0;
         for (int k = m_historyResults.size() - 1; k >= 0; --k) {
             bool found = false;
             for (const auto& tr : m_historyResults[k].tracks) {
-                if (tr.id == t.targetId) {
-                    finalAngle = tr.currentAngle;
-                    found = true;
-                    break;
-                }
+                if (tr.id == t.targetId) { finalAngle = tr.currentAngle; found = true; break; }
             }
             if (found) break;
         }
 
-        // 第4列：真实方位
         QTableWidgetItem* trueItem = new QTableWidgetItem(QString("%1°").arg(finalAngle, 0, 'f', 1));
-        trueItem->setTextAlignment(Qt::AlignCenter);
-        m_tableTargetFeatures->setItem(i, 4, trueItem);
+        trueItem->setTextAlignment(Qt::AlignCenter); m_tableTargetFeatures->setItem(i, 6, trueItem);
 
-        // 第5列：系统解算方位
         QTableWidgetItem* estItem = new QTableWidgetItem(QString("%1°").arg(finalAngle, 0, 'f', 1));
-        estItem->setTextAlignment(Qt::AlignCenter);
-        m_tableTargetFeatures->setItem(i, 5, estItem);
+        estItem->setTextAlignment(Qt::AlignCenter); m_tableTargetFeatures->setItem(i, 7, estItem);
 
-        // 第6列：综合判定
-        QString resStr = (t.accuracy > 0.0) ? "[锁定成功]" : "[未锁定]";
-        QColor resColor = (t.accuracy > 0.0) ? QColor(39, 174, 96) : Qt::red;
-
+        QString resStr = (t.accuracyDcv > 0.0) ? "[锁定成功]" : "[未锁定]";
+        QColor resColor = (t.accuracyDcv > 0.0) ? QColor(39, 174, 96) : Qt::red;
         QTableWidgetItem* resItem = new QTableWidgetItem(resStr);
-        resItem->setTextAlignment(Qt::AlignCenter);
-        resItem->setForeground(QBrush(resColor));
-        QFont font = resItem->font(); font.setBold(true); resItem->setFont(font);
-        m_tableTargetFeatures->setItem(i, 6, resItem);
+        resItem->setTextAlignment(Qt::AlignCenter); resItem->setForeground(QBrush(resColor));
+        QFont font = resItem->font(); font.setBold(true); resItem->setFont(font); m_tableTargetFeatures->setItem(i, 8, resItem);
 
         barPositions.append(i + 1);
-        barValues.append(t.accuracy);
+        barValuesInst.append(t.accuracy);
+        barValuesDcv.append(t.accuracyDcv);
         textTicker->addTick(i + 1, QString("T %1").arg(t.targetId));
 
-        if (t.accuracy > 0.1) {
-            totalAcc += t.accuracy;
-            validAccCount++;
-        }
+        if (t.accuracy > 0.1) { totalAccInst += t.accuracy; validAccInstCount++; }
+        if (t.accuracyDcv > 0.1) { totalAccDcv += t.accuracyDcv; validAccDcvCount++; }
     }
 
-    // 【核心修复：重置列宽分配策略，防止表格越拉越长并让第二列最宽】
-    QHeaderView* header = m_tableTargetFeatures->horizontalHeader();
-    header->setStretchLastSection(false); // 关闭最后一列强制拉伸，防止布局冲突
-    header->setSectionResizeMode(0, QHeaderView::ResizeToContents); // ID列：包裹内容
-    header->setSectionResizeMode(1, QHeaderView::Stretch);          // 线谱群列：吸收所有多余宽度，变得最宽
-    header->setSectionResizeMode(2, QHeaderView::ResizeToContents); // 正确率：包裹内容
-    header->setSectionResizeMode(3, QHeaderView::ResizeToContents); // 轴频：包裹内容
-    header->setSectionResizeMode(4, QHeaderView::ResizeToContents); // 真实方位：包裹内容
-    header->setSectionResizeMode(5, QHeaderView::ResizeToContents); // 解算方位：包裹内容
-    header->setSectionResizeMode(6, QHeaderView::ResizeToContents); // 综合判定：包裹内容
-
-    if (validAccCount > 0) {
-        m_lblStatAvgAcc->setText(QString("<span style='font-size:36px; color:#27ae60;'>%1 %</span>").arg(totalAcc / validAccCount, 0, 'f', 2));
+    // ========================================================
+    // 【细节修复 2】：顶侧双卡片均值与并排柱状图
+    // ========================================================
+    if (validAccInstCount > 0 || validAccDcvCount > 0) {
+        double avgInst = validAccInstCount > 0 ? totalAccInst / validAccInstCount : 0.0;
+        double avgDcv = validAccDcvCount > 0 ? totalAccDcv / validAccDcvCount : 0.0;
+        m_lblStatAvgAcc->setText(QString("<span style='font-size:20px; color:#e67e22;'>瞬时: %1%</span><br><span style='font-size:20px; color:#27ae60;'>DCV: %2%</span>").arg(avgInst, 0, 'f', 1).arg(avgDcv, 0, 'f', 1));
     } else {
         m_lblStatAvgAcc->setText("<span style='font-size:36px; color:#7f8c8d;'>--- %</span>");
     }
 
-    m_plotTargetAccuracy->xAxis->setTicker(textTicker);
-    m_plotTargetAccuracy->xAxis->setRange(0, result.targetEvals.size() + 1);
-    m_accuracyBars->setData(barPositions, barValues);
-    m_plotTargetAccuracy->replot();
-    updatePlotOriginalRange(m_plotTargetAccuracy);
+    m_plotTargetAccuracy->clearPlottables();
+    QCPBars *barsInst = new QCPBars(m_plotTargetAccuracy->xAxis, m_plotTargetAccuracy->yAxis);
+    QCPBars *barsDcv = new QCPBars(m_plotTargetAccuracy->xAxis, m_plotTargetAccuracy->yAxis);
 
-    // 同步更新批次走势图，且确保强制重绘
+    barsInst->setName("瞬时线谱正确率");
+    barsInst->setPen(QPen(Qt::NoPen)); barsInst->setBrush(QColor(230, 126, 34)); barsInst->setWidth(0.3);
+
+    barsDcv->setName("DCV累积正确率");
+    barsDcv->setPen(QPen(Qt::NoPen)); barsDcv->setBrush(QColor(39, 174, 96)); barsDcv->setWidth(0.3);
+
+    QCPBarsGroup *group = new QCPBarsGroup(m_plotTargetAccuracy);
+    group->append(barsInst); group->append(barsDcv); group->setSpacing(2);
+
+    barsInst->setData(barPositions, barValuesInst);
+    barsDcv->setData(barPositions, barValuesDcv);
+    m_plotTargetAccuracy->legend->setVisible(true);
+
+    m_plotTargetAccuracy->xAxis->setTicker(textTicker); m_plotTargetAccuracy->xAxis->setRange(0, result.targetEvals.size() + 1);
+    m_plotTargetAccuracy->replot(); updatePlotOriginalRange(m_plotTargetAccuracy);
+    // ========================================================
+
     QVector<double> batchX, batchY;
-    for (const auto& pair : m_batchAccuracies) {
-        batchX.append(pair.first);
-        batchY.append(pair.second);
-    }
+    for (const auto& pair : m_batchAccuracies) { batchX.append(pair.first); batchY.append(pair.second); }
     if (m_plotBatchAccuracy && m_plotBatchAccuracy->graphCount() > 0) {
         m_plotBatchAccuracy->graph(0)->setData(batchX, batchY);
         m_plotBatchAccuracy->xAxis->setRange(0, batchX.isEmpty() ? 5 : batchX.last() + 1);
-        m_plotBatchAccuracy->yAxis->setRange(0, 105);
-        m_plotBatchAccuracy->replot();
-        updatePlotOriginalRange(m_plotBatchAccuracy);
+        m_plotBatchAccuracy->yAxis->setRange(0, 105); m_plotBatchAccuracy->replot(); updatePlotOriginalRange(m_plotBatchAccuracy);
     }
-
     m_mainTabWidget->setCurrentIndex(3);
 }
 

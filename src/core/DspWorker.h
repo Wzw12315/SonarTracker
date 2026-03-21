@@ -13,6 +13,8 @@ public:
 
     void setDirectory(const QString& dirPath);
     void setConfig(const DspConfig& config);
+    // 【新增】：接收先验真值
+        void setGroundTruths(const std::vector<TargetTruth>& truths) { m_groundTruths = truths; }
     void stop();
     void pause();
     void resume();
@@ -36,7 +38,8 @@ private:
     DspConfig m_config;
     std::atomic<bool> m_isRunning;
     std::atomic<bool> m_isPaused;
-
+    // 【新增】：存储先验真值
+        std::vector<TargetTruth> m_groundTruths;
     // 【修改】：对齐你的日志，设定每 10 帧触发一次批处理与界面重绘
 //    int m_batchSize = 10;
 };

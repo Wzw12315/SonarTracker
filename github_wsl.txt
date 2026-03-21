@@ -6,7 +6,7 @@ git status
 git add .
 
 # 2. 提交这些修改，并写一句简短的备注（把引号里的字换成你这次实际改了什么）
-git commit -m "更新了目标方位跟踪的自适应绘图逻辑"
+git commit -m "更新321—2"
 
 # 3. 推送到 GitHub 云端
 git push

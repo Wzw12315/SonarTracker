@@ -30,6 +30,11 @@ struct DspConfig {
     double lofarSnrThreshMult = 2.5;
     int lofarPeakMinDist = 30;
 
+    // [新增] 累积DCV提取参数
+    int dcvLofarBgMedWindow = 100;
+    double dcvLofarSnrThreshMult = 1.2;
+    int dcvLofarPeakMinDist = 15;
+
     int firOrder = 64;
     double firCutoff = 0.1;
 
@@ -59,6 +64,7 @@ struct BatchTargetFeature {
     int formalId;
     double calAngle;
     std::vector<double> calLofar;
+    std::vector<double> calLofarDcv; // [新增] 批处理聚合后的 DCV 累积线谱
     double calDemon;
 };
 
@@ -84,6 +90,11 @@ struct TargetTrack {
 
     std::vector<double> lineSpectra;
     double shaftFreq;
+
+    // [新增] 累积DCV线谱专属存储
+    std::vector<double> lineSpectraDcv;
+    QVector<double> lineSpectrumAmpDcv;
+    QVector<double> accumulatedDcvSpectrum;
 };
 Q_DECLARE_METATYPE(TargetTrack)
 
@@ -122,6 +133,10 @@ struct TargetEvaluation {
     QString lineSpectraStr;
     double accuracy; // 百分比正确率 (0~100)
     double shaftFreq;
+
+    // [新增] 累积DCV专属评估结果
+    QString lineSpectraStrDcv;
+    double accuracyDcv = 0.0;
 };
 Q_DECLARE_METATYPE(TargetEvaluation)
 

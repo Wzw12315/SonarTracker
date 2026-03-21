@@ -104,6 +104,10 @@ private:
     QLineEdit* m_editLofarBgMedWindow;
     QLineEdit* m_editLofarSnrThreshMult;
     QLineEdit* m_editLofarPeakMinDist;
+    // [新增] 累积 DCV 线谱提取参数输入框
+        QLineEdit* m_editDcvLofarBgMedWindow;
+        QLineEdit* m_editDcvLofarSnrThreshMult;
+        QLineEdit* m_editDcvLofarPeakMinDist;
     QLineEdit* m_editFirOrder;
     QLineEdit* m_editFirCutoff;
     QLineEdit* m_editTpswG;
