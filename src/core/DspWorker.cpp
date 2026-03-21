@@ -131,6 +131,9 @@ void DspWorker::run() {
 
     Eigen::MatrixXd signal_w = Eigen::MatrixXd::Zero(M, NFFT_WIN);
     TrackManager trackManager;
+    // 【新增】：将前端设定的航迹参数注射给 TrackManager
+        trackManager.setParameters(m_config.trackAssocGate, m_config.trackMHits);
+
     std::vector<FrameResult> history_frames;
     std::vector<FrameResult> batch_frames;
 
@@ -784,23 +787,29 @@ void DspWorker::run() {
 
             // =========================================================================
 
-            double median_shaft = shafts.empty() ? 0.0 : calculateMedian(shafts);
-            report += QString("  ▶ 目标 %1             [瞬时线谱] : %2 \n").arg(tid).arg(freqStr);
-            report += QString("                      [DCV累积线谱] : %1 \n").arg(freqStrDcv);
+            // =========================================================================
+                    // 【修改点】：统一固定每一行前面的空格数 (22个空格)，保证视觉上完美列对齐
+                    double median_shaft = shafts.empty() ? 0.0 : calculateMedian(shafts);
+                    report += QString("  ▶ 目标 %1             [瞬时线谱] : %2\n").arg(tid).arg(freqStr);
+                    report += QString("                      [DCV累积线谱] : %1\n").arg(freqStrDcv);
 
-            if (hasTruth && !currentTruth.trueLofarFreqs.empty()) {
-                QString trueFreqsStr = "[ ";
-                for (double f : currentTruth.trueLofarFreqs) trueFreqsStr += QString("%1 ").arg(f, 0, 'f', 1);
-                report += QString("                      [JSON 真值] : %1] Hz\n").arg(trueFreqsStr);
-            }
+                    if (hasTruth && !currentTruth.trueLofarFreqs.empty()) {
+                        QString trueFreqsStr = "[ ";
+                        for (double f : currentTruth.trueLofarFreqs) trueFreqsStr += QString("%1 ").arg(f, 0, 'f', 1);
+                        report += QString("                      [JSON 真值] : %1] Hz\n").arg(trueFreqsStr);
+                    }
 
-            report += QString("             [瞬时提取正确率] : %1% \n").arg(current_accuracy, 0, 'f', 2);
-            report += QString("             [DCV提取正确率] : %1% \n").arg(current_accuracy_dcv, 0, 'f', 2);
+                    report += QString("                      [瞬时提取正确率] : %1%\n").arg(current_accuracy, 0, 'f', 2);
+                    report += QString("                      [DCV提取正确率] : %1%\n").arg(current_accuracy_dcv, 0, 'f', 2);
 
-            if (median_shaft > 0) report += QString("             [低频轴频] : 稳定中心约 %1 Hz\n").arg(median_shaft, 0, 'f', 1);
-            else report += QString("             [低频轴频] : 未检测到\n");
+                    if (median_shaft > 0) report += QString("                      [低频轴频] : 稳定中心约 %1 Hz\n").arg(median_shaft, 0, 'f', 1);
+                    else report += QString("                      [低频轴频] : 未检测到\n");
 
-            TargetEvaluation tEval;
+                    // 【新增】：在每个目标输出完毕后，额外增加一个空行，拉开目标间的间距
+                            report += "\n";
+
+                    TargetEvaluation tEval;
+
             tEval.targetId = tid;
             tEval.lineSpectraStr = freqStr;
             tEval.accuracy = current_accuracy;

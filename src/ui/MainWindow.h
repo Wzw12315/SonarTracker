@@ -117,9 +117,13 @@ private:
     QLineEdit* m_editDpAlpha;
     QLineEdit* m_editDpBeta;
     QLineEdit* m_editDpGamma;
-    QLineEdit* m_editDcvRlIter;
-    QLineEdit* m_editBatchSize;
 
+    QLineEdit* m_editDcvRlIter;
+        QLineEdit* m_editBatchSize;
+
+        // 【新增】：航迹关联参数输入框指针
+        QLineEdit* m_editTrackAssocGate;
+        QLineEdit* m_editTrackMHits;
     QPushButton* m_btnSelectFiles;
     QPushButton* m_btnManualTruth; // 【修改】：替换了 m_btnLoadTruth
     QPushButton* m_btnStart;

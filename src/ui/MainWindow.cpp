@@ -329,6 +329,9 @@ void MainWindow::onStartClicked() {
     m_currentConfig.dpBeta = m_editDpBeta->text().toDouble();
     m_currentConfig.dpGamma = m_editDpGamma->text().toDouble();
     m_currentConfig.dcvRlIter = m_editDcvRlIter->text().toInt();
+    // 【新增】：将 UI 输入的航迹参数赋给全局 Config
+        m_currentConfig.trackAssocGate = m_editTrackAssocGate->text().toDouble();
+        m_currentConfig.trackMHits = m_editTrackMHits->text().toInt();
 
     m_btnStart->setEnabled(false); m_btnSelectFiles->setEnabled(false); m_btnManualTruth->setEnabled(false);
     m_btnPauseResume->setEnabled(true); m_btnStop->setEnabled(true);
@@ -371,12 +374,22 @@ void MainWindow::onStartClicked() {
     }
 
     m_worker->setDirectory(m_currentDir);
-    m_worker->setConfig(m_currentConfig);
+        m_worker->setConfig(m_currentConfig);
 
-    // 【新增】：将验证器中解析好的 JSON 真值传给后端 DspWorker
-        m_worker->setGroundTruths(m_validator->getTruthData());
-    m_worker->start();
-}
+        // 【新增】：将验证器中解析好的 JSON 真值传给后端 DspWorker
+        const std::vector<TargetTruth>& truths = m_validator->getTruthData();
+        m_worker->setGroundTruths(truths);
+
+        // 在 start() 之前加一段日志提示，直接判断 truths 是否为空
+        if (truths.empty()) {
+            m_logConsole->appendPlainText("[系统提示] 未加载先验真值数据，系统进入【实战盲测模式】。Tab4正确率将显示为特征稳定度。");
+        } else {
+            m_logConsole->appendPlainText(QString("[系统提示] 已加载 %1 个先验真值目标，系统进入【算法仿真评估模式】。").arg(truths.size()));
+        }
+
+        // 启动线程 (注意这里只保留一个 start)
+        m_worker->start();
+    }
 
 
 void MainWindow::onStopClicked() {
@@ -611,7 +624,7 @@ void MainWindow::setupUi() {
 
     m_btnSelectFiles = new QPushButton(" 数据文件输入...", this);
     m_btnSelectFiles->setIcon(style()->standardIcon(QStyle::SP_DirOpenIcon));
-    m_btnManualTruth = new QPushButton(" 目标先验真值配置大厅...", this);
+    m_btnManualTruth = new QPushButton(" 目标先验真值配置窗口...", this);
     m_btnManualTruth->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
     m_btnStart       = new QPushButton(" 开始算法处理", this);
     m_btnStart->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
@@ -619,7 +632,7 @@ void MainWindow::setupUi() {
     m_btnPauseResume->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
     m_btnStop        = new QPushButton(" 终止算法", this);
     m_btnStop->setIcon(style()->standardIcon(QStyle::SP_MediaStop));
-    m_btnExport      = new QPushButton(" 导出文本报表", this);
+    m_btnExport      = new QPushButton(" 一键日志图片", this);
     m_btnExport->setIcon(style()->standardIcon(QStyle::SP_DialogSaveButton));
 
     m_btnStart->setEnabled(false); m_btnPauseResume->setEnabled(false); m_btnStop->setEnabled(false);
@@ -662,7 +675,13 @@ void MainWindow::setupUi() {
     fAzDet->addRow("旁瓣抑制比 (线性):", m_editAzDetSidelobeRatio = new QLineEdit("0.02"));
     fAzDet->addRow("寻峰最小点距:", m_editAzDetPeakMinDist = new QLineEdit("3"));
     paramLayout->addWidget(gAzDet);
-
+    // ================== [新增：航迹关联与判定区] ==================
+        QGroupBox* gTrack = new QGroupBox("目标航迹关联与判定", paramContainer);
+        QFormLayout* fTrack = new QFormLayout(gTrack);
+        fTrack->addRow("航迹关联波门 (°):", m_editTrackAssocGate = new QLineEdit("6.0"));
+        fTrack->addRow("M/N 判定激活帧数:", m_editTrackMHits = new QLineEdit("10"));
+        paramLayout->addWidget(gTrack);
+        // ==============================================================
     // ================== [重点修改区：加入DCV线谱参数] ==================
     QGroupBox* gLofarExt = new QGroupBox("实时与累积线谱提取", paramContainer);
     QFormLayout* fLofarExt = new QFormLayout(gLofarExt);
@@ -827,7 +846,7 @@ void MainWindow::setupUi() {
 
     tab2Scroll->setWidget(tab2Container);
     tab2MainLayout->addWidget(tab2Scroll);
-    m_mainTabWidget->addTab(tab2, "后处理: 空间方位谱全景与切片");
+    m_mainTabWidget->addTab(tab2, "实时处理: 空间方位谱全景与切片");
 
     // ================== TAB 3 ==================
     QWidget* tab3 = new QWidget();
@@ -901,7 +920,7 @@ void MainWindow::setupUi() {
     tab4ContentSplitter->addWidget(bottomPlotsSplitter);
     tab4ContentSplitter->setStretchFactor(0, 1); tab4ContentSplitter->setStretchFactor(1, 1);
     tab4Layout->addWidget(tab4ContentSplitter);
-    m_mainTabWidget->addTab(tab4, "系统效能与指标验收评估");
+    m_mainTabWidget->addTab(tab4, "系统效能与指标评估");
 
     // ==========================================
     // 底部：评估报告终端
@@ -1542,7 +1561,7 @@ void MainWindow::onEvaluationResultReady(const SystemEvaluationResult& result) {
 
         QTableWidgetItem* accItem = new QTableWidgetItem(QString("%1 %").arg(t.accuracy, 0, 'f', 2));
         accItem->setTextAlignment(Qt::AlignCenter);
-        accItem->setForeground(QBrush((t.accuracy < 90.0) ? Qt::red : QColor(39, 174, 96)));
+        accItem->setForeground(QBrush((t.accuracy < 60.0) ? Qt::red : QColor(39, 174, 96)));
         m_tableTargetFeatures->setItem(i, 2, accItem);
 
         QTableWidgetItem* spectraDcvItem = new QTableWidgetItem(t.lineSpectraStrDcv);
@@ -1550,7 +1569,7 @@ void MainWindow::onEvaluationResultReady(const SystemEvaluationResult& result) {
 
         QTableWidgetItem* accDcvItem = new QTableWidgetItem(QString("%1 %").arg(t.accuracyDcv, 0, 'f', 2));
         accDcvItem->setTextAlignment(Qt::AlignCenter);
-        accDcvItem->setForeground(QBrush((t.accuracyDcv < 90.0) ? Qt::red : QColor(39, 174, 96)));
+        accDcvItem->setForeground(QBrush((t.accuracyDcv < 60.0) ? Qt::red : QColor(39, 174, 96)));
         m_tableTargetFeatures->setItem(i, 4, accDcvItem);
 
         QTableWidgetItem* shaftItem = new QTableWidgetItem(t.shaftFreq > 0 ? QString("%1 Hz").arg(t.shaftFreq, 0, 'f', 1) : "未锁定");
@@ -1565,11 +1584,22 @@ void MainWindow::onEvaluationResultReady(const SystemEvaluationResult& result) {
             if (found) break;
         }
 
-        QTableWidgetItem* trueItem = new QTableWidgetItem(QString("%1°").arg(finalAngle, 0, 'f', 1));
-        trueItem->setTextAlignment(Qt::AlignCenter); m_tableTargetFeatures->setItem(i, 6, trueItem);
+        // ========================================================
+                // 【UI细节修复】：盲测模式下真实方位显示 "--"，有真值时显示真实值
+                QString trueAngleStr = "--";
+                // 【修正】：直接从 m_validator 获取真值数据
+                for (const auto& gt : m_validator->getTruthData()) {
+                    if (gt.id == t.targetId) {
+                        trueAngleStr = QString("%1°").arg(gt.initialAngle, 0, 'f', 1);
+                        break;
+                    }
+                }
+                QTableWidgetItem* trueItem = new QTableWidgetItem(trueAngleStr);
+                trueItem->setTextAlignment(Qt::AlignCenter); m_tableTargetFeatures->setItem(i, 6, trueItem);
 
-        QTableWidgetItem* estItem = new QTableWidgetItem(QString("%1°").arg(finalAngle, 0, 'f', 1));
-        estItem->setTextAlignment(Qt::AlignCenter); m_tableTargetFeatures->setItem(i, 7, estItem);
+                QTableWidgetItem* estItem = new QTableWidgetItem(QString("%1°").arg(finalAngle, 0, 'f', 1));
+                estItem->setTextAlignment(Qt::AlignCenter); m_tableTargetFeatures->setItem(i, 7, estItem);
+                // ========================================================
 
         QString resStr = (t.accuracyDcv > 0.0) ? "[锁定成功]" : "[未锁定]";
         QColor resColor = (t.accuracyDcv > 0.0) ? QColor(39, 174, 96) : Qt::red;

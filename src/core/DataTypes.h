@@ -30,7 +30,6 @@ struct DspConfig {
     double lofarSnrThreshMult = 2.5;
     int lofarPeakMinDist = 30;
 
-    // [新增] 累积DCV提取参数
     int dcvLofarBgMedWindow = 100;
     double dcvLofarSnrThreshMult = 1.2;
     int dcvLofarPeakMinDist = 15;
@@ -47,9 +46,12 @@ struct DspConfig {
     double dpGamma = 0.1;
 
     int batchSize = 40;
+
+    // 【新增】：航迹关联与生命周期参数
+    double trackAssocGate = 6.0;
+    int trackMHits = 10;
 };
 Q_DECLARE_METATYPE(DspConfig)
-
 struct TargetTruth {
     int id;
     QString name;

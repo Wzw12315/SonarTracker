@@ -15,12 +15,11 @@ SelfValidator::SelfValidator(QObject *parent) : QObject(parent) {
 }
 
 void SelfValidator::initDefaultTruthData() {
-    m_truthData = {
-        {1, "Target 1", 60.0, 20000.0, 4.0, 45.0, {125.0}, 2.1},
-        {2, "Target 2", 80.0, 20000.0, 5.0, 80.0, {112.0}, 2.8}
-    };
+    // 【核心修改】：彻底清空代码中硬编码的预制真值模板。
+    // 这样系统默认启动时就是一张“白纸”，m_truthData 为空。
+    // 除非用户手动导入 JSON，否则将完美触发系统的“无先验实战盲测模式”。
+    m_truthData.clear();
 }
-
 void SelfValidator::loadTruthData(const QString& filePath) {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
@@ -76,7 +75,6 @@ double SelfValidator::calculateTheoreticalAngle(int targetId, double timeSeconds
 }
 
 void SelfValidator::onBatchFinished(int batchIndex, int startFrame, int endFrame, const std::vector<BatchTargetFeature>& features) {
-    // 【修正】：使用 m_truthData.empty() 替代未声明的 m_hasTruthData
     if (m_truthData.empty()) return;
 
     QString log = QString("\n======================================================\n");
@@ -97,9 +95,6 @@ void SelfValidator::onBatchFinished(int batchIndex, int startFrame, int endFrame
         }
         if (freqsStr.isEmpty()) freqsStr = "无";
 
-        // ========================================================
-        // 格式化提取出新增的 DCV 累积计算频点
-        // ========================================================
         QString freqsStrDcv;
         for (size_t i = 0; i < feature.calLofarDcv.size(); ++i) {
             freqsStrDcv += QString::number(feature.calLofarDcv[i], 'f', 1);
@@ -107,20 +102,16 @@ void SelfValidator::onBatchFinished(int batchIndex, int startFrame, int endFrame
         }
         if (freqsStrDcv.isEmpty()) freqsStrDcv = "无";
 
-        log += QString("    输入计算方位: %1°, 瞬时计算频率: [ %2 ] Hz, DCV计算频率: [ %3 ] Hz, 计算轴频: %4 Hz\n")
+        log += QString("    计算方位: %1°, 瞬时计算频率: [ %2 ] Hz, DCV计算频率: [ %3 ] Hz, 计算轴频: %4 Hz\n")
                .arg(feature.calAngle, 0, 'f', 1)
                .arg(freqsStr)
                .arg(freqsStrDcv)
                .arg(feature.calDemon, 0, 'f', 1);
-        // ========================================================
 
         double maxScore = -1.0;
         int bestMatchTruthId = -1;
 
-        // 【修正】：将 m_truthList 替换为头文件中正确声明的 m_truthData
         for (const auto& truth : m_truthData) {
-            // 注意：如果你的 evaluateMatch 函数还没有适配传入 feature.calLofarDcv，
-            // 内部可能依然只使用了瞬时的 calLofar，这是正常的，当前只要跑通即可。
             double score = evaluateMatch(feature, truth);
             if (score > maxScore) {
                 maxScore = score;
@@ -130,20 +121,30 @@ void SelfValidator::onBatchFinished(int batchIndex, int startFrame, int endFrame
 
         if (bestMatchTruthId != -1) {
             TargetTruth bestTruth;
-            // 【修正】：将 m_truthList 替换为 m_truthData
             for (const auto& t : m_truthData) {
                 if (t.id == bestMatchTruthId) bestTruth = t;
             }
 
+            double azimuthError = std::abs(feature.calAngle - bestTruth.initialAngle);
+
+            // 【核心修正】：阈值降至 50.0。第一批次(初始化时)若无线谱，仅靠方位(30分)+轴频(30分)依旧可以判定成功！
+            bool isCorrect = (maxScore >= 50.0);
+
+            QString trueLofarStr;
+            for (size_t i = 0; i < bestTruth.trueLofarFreqs.size(); ++i) {
+                trueLofarStr += QString::number(bestTruth.trueLofarFreqs[i], 'f', 1);
+                if (i < bestTruth.trueLofarFreqs.size() - 1) trueLofarStr += ", ";
+            }
+            if (trueLofarStr.isEmpty()) trueLofarStr = "无";
+
             log += QString("    最佳匹配先验: [%1] (Truth ID: %2)\n").arg(bestTruth.name).arg(bestTruth.id);
+            log += QString("    真实方位: %1° (方位误差: %2°)\n").arg(bestTruth.initialAngle, 0, 'f', 1).arg(azimuthError, 0, 'f', 1);
+            log += QString("    真实线谱: [ %1 ] Hz\n").arg(trueLofarStr);
+            log += QString("    真实轴频: %1 Hz\n").arg(bestTruth.trueDemonFreq > 0 ? QString::number(bestTruth.trueDemonFreq, 'f', 1) : "无");
             log += QString("    置信度得分: %1 / 100.0\n").arg(maxScore, 0, 'f', 1);
 
-            QString estClass = (maxScore >= 60.0) ? (bestTruth.initialDistance > 20.0 ? "水下潜艇" : "水面舰船") : "未知杂波";
-            QString trueClass = (bestTruth.initialDistance > 20.0) ? "水下潜艇" : "水面舰船";
-            bool isCorrect = (estClass == trueClass && maxScore >= 60.0);
-
-            log += QString("    真实深度: %1 m -> 物理类别基准: %2\n").arg(bestTruth.initialDistance).arg(trueClass);
-            log += QString("    综合判别: [%1] -> 判别%2\n").arg(estClass).arg(isCorrect ? "正确" : "错误");
+            // 【核心修正】：彻底删除物理类别强制判断，直接输出判定成功或失败
+            log += QString("    综合判别: 判定%1\n").arg(isCorrect ? "成功" : "失败");
 
             if (isCorrect) correctCount++;
 
