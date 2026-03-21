@@ -46,7 +46,9 @@ struct DspConfig {
         double dpAlpha = 2.5;    // 【大幅调大】惩罚因子，强制提取出连贯、平滑的直线特征
         double dpBeta = 0.8;     // 【调小】幅度权重，削弱对瞬时高亮噪声点的盲目追随
         double dpGamma = 0.1;
-
+        // 【新增】：暴露的 DP 门限参数
+            double dpPrctileThresh = 99.0;   // DP 状态判决门限 (分位数，默认 99.0)
+            double dpPeakStdMult = 1.5;      // DP 寻峰提取门限 (标准差乘子，默认 1.5)
     int batchSize = 40;
 
     // 【新增】：航迹关联与生命周期参数

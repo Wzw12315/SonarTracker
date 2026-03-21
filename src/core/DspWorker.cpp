@@ -868,9 +868,11 @@ void DspWorker::run() {
                 Eigen::MatrixXd Z_TPSW;
                 Eigen::MatrixXi counter;
 
-                detect_line_spectrum_from_lofar_change(lofar_mat, fs, NFFT_R, center_freq, Z_TPSW, counter, f_stft, t_stft,
-                                                       m_config.tpswG, m_config.tpswE, m_config.tpswC, m_config.dpL, m_config.dpAlpha, m_config.dpBeta, m_config.dpGamma);
-
+                // 找到 src/core/DspWorker.cpp 大约 466 行，修改 detect_line_spectrum_from_lofar_change 的调用：
+                                detect_line_spectrum_from_lofar_change(lofar_mat, fs, NFFT_R, center_freq, Z_TPSW, counter, f_stft, t_stft,
+                                                                       m_config.tpswG, m_config.tpswE, m_config.tpswC, m_config.dpL,
+                                                                       m_config.dpAlpha, m_config.dpBeta, m_config.dpGamma,
+                                                                       m_config.dpPrctileThresh, m_config.dpPeakStdMult); // 【新增最后两个参数】
                 OfflineTargetResult offRes;
                 offRes.targetId = tid;
                 offRes.startAngle = startAng;

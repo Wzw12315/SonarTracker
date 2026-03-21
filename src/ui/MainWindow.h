@@ -117,7 +117,8 @@ private:
     QLineEdit* m_editDpAlpha;
     QLineEdit* m_editDpBeta;
     QLineEdit* m_editDpGamma;
-
+    QLineEdit* m_editDpPrctileThresh; // 【新增】
+        QLineEdit* m_editDpPeakStdMult;   // 【新增】
     QLineEdit* m_editDcvRlIter;
         QLineEdit* m_editBatchSize;
 

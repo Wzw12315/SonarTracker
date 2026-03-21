@@ -25,7 +25,9 @@ void detect_line_spectrum_from_lofar_change(
     int L = 5,
     double alpha = 1.5,
     double beta = 1.0,
-    double gamma = 0.1
+    double gamma = 0.1,
+        double prctile_thresh = 99.0, // 【新增】
+            double peak_std_mult = 1.5    // 【新增】
 );
 
 Eigen::MatrixXd tpsw_normalization(const Eigen::MatrixXd& X, double G, double E, double C);

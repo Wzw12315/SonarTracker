@@ -205,7 +205,9 @@ void detect_line_spectrum_from_lofar_change(
     int L,
     double alpha,
     double beta,
-    double gamma
+    double gamma,
+    double prctile_thresh,
+    double peak_std_mult
 )
 {
     int M_time = lofar_mat.rows();
@@ -220,7 +222,14 @@ void detect_line_spectrum_from_lofar_change(
     int M_stft = Pxx_linear.rows();
     int N_stft = Pxx_linear.cols();
 
-    double thresh_break = prctile(Pxx_linear, 99);
+    // =========================================================================
+    // 【核心修复 1】：引入物理 SNR 底线，阻断 DP 在纯白噪声中强行连线
+    // 纯背景噪声均值在 1.0 左右。如果按百分比取的门限过低，强制拉高至 1.5(约1.76dB)
+    // 这样能确保只有真正脱颖而出的能量斑才能进入 DP 连线池，彻底消灭满屏假红线。
+    // =========================================================================
+    double prctile_val = prctile(Pxx_linear, prctile_thresh);
+    double thresh_break = std::max(prctile_val, 1.5);
+
     int win_freq_len = L;
 
     RowVectorXd phi_f, f_window_start, max_phi_window_all;
@@ -230,12 +239,9 @@ void detect_line_spectrum_from_lofar_change(
                           alpha, beta, gamma, fs,
                           phi_f, f_window_start, num_windows, path_m_all, max_phi_window_all);
 
-    // =========================================================================
-    // 【核心修复】：完全对齐 MATLAB 的 `findpeaks` 寻峰与门限算法
-    // =========================================================================
     double mean_phi = phi_f.mean();
     double std_phi = std::sqrt((phi_f.array() - mean_phi).square().sum() / (phi_f.size() - 1.0));
-    double thresh_phi = mean_phi + 1.5 * std_phi;
+    double thresh_phi = mean_phi + peak_std_mult * std_phi;
 
     std::vector<std::pair<double, int>> all_peaks;
     for (int i = 1; i < phi_f.size() - 1; ++i) {
@@ -243,11 +249,17 @@ void detect_line_spectrum_from_lofar_change(
             all_peaks.push_back({phi_f(i), i});
         }
     }
+
     // 按振幅降序，进行 NMS 极大值抑制
     std::sort(all_peaks.begin(), all_peaks.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
 
     std::vector<int> valid_win_idx;
-    int minPeakDist = 8; // 对齐 MATLAB 的 'MinPeakDistance', 8
+
+    // =========================================================================
+    // 【核心修复 2】：扩大极大值抑制距离 (Non-Maximum Suppression)
+    // 水面舰船宽带起伏容易在附近产生多个碎裂的假峰，扩大到 24 (约4Hz带宽) 进行融合过滤
+    // =========================================================================
+    int minPeakDist = 24;
     for (const auto& p : all_peaks) {
         bool ok = true;
         for (int vp : valid_win_idx) {
@@ -259,16 +271,13 @@ void detect_line_spectrum_from_lofar_change(
 
     counter = MatrixXi::Zero(M_stft, N_stft);
 
-    // 仅将通过 findpeaks 筛选出的合法极大值路径赋予 1
+    // 仅置中心点为 1，确保线谱为单像素，不膨胀
     for (int win_idx_cpp : valid_win_idx) {
         RowVectorXd path_m_mat = path_m_all.row(win_idx_cpp);
         for (int t_cpp = 0; t_cpp < N_stft; ++t_cpp) {
             int global_freq_idx_cpp = win_idx_cpp + static_cast<int>(path_m_mat(t_cpp)) - 1;
-            for(int w = -2; w <= 2; ++w) {
-                int safe_idx = global_freq_idx_cpp + w;
-                safe_idx = max(0, min(M_stft - 1, safe_idx));
-                counter(safe_idx, t_cpp) = 1;
-            }
+            int safe_idx = max(0, min(M_stft - 1, global_freq_idx_cpp));
+            counter(safe_idx, t_cpp) = 1;
         }
     }
 

@@ -803,15 +803,28 @@ void MainWindow::setupUi() {
     paramLayout->addWidget(gDemon);
 
     QGroupBox* gDp = new QGroupBox("TPSW 与 DP 轨迹寻优", paramContainer);
-    QFormLayout* fDp = new QFormLayout(gDp);
-    fDp->addRow("TPSW 保护窗 (G):", m_editTpswG = new QLineEdit("45"));
-    fDp->addRow("TPSW 排除窗 (E):", m_editTpswE = new QLineEdit("10"));
-    fDp->addRow("TPSW 补偿因子 (C):", m_editTpswC = new QLineEdit("1.25"));
-    fDp->addRow("DP 记忆窗长 (L):", m_editDpL = new QLineEdit("3"));
-    fDp->addRow("惩罚因子 Alpha:", m_editDpAlpha = new QLineEdit("2.5"));
-    fDp->addRow("惩罚因子 Beta:", m_editDpBeta = new QLineEdit("0.8"));
-    fDp->addRow("偏置因子 Gamma:", m_editDpGamma = new QLineEdit("0.1"));
-    paramLayout->addWidget(gDp);
+        QFormLayout* fDp = new QFormLayout(gDp);
+
+        // 【增大保护窗】：从 30 增加到 60，扩大背景采样跨度，避免跟着宽带噪声的驼峰一起起伏
+        fDp->addRow("TPSW 保护窗 (G):", m_editTpswG = new QLineEdit("60"));
+        fDp->addRow("TPSW 排除窗 (E):", m_editTpswE = new QLineEdit("5"));
+
+        // 【核心参数：大幅提高补偿因子】：从 1.15 提高到 1.6。
+        // 这将迫使算法把剧烈波动的宽带底噪完全吸收进背景均值中，从而把水面舰船的 TPSW 谱压成深蓝色
+        fDp->addRow("TPSW 补偿因子 (C):", m_editTpswC = new QLineEdit("1.6"));
+
+        fDp->addRow("DP 记忆窗长 (L):", m_editDpL = new QLineEdit("3"));
+        fDp->addRow("惩罚因子 Alpha:", m_editDpAlpha = new QLineEdit("2.5"));
+        fDp->addRow("惩罚因子 Beta:", m_editDpBeta = new QLineEdit("0.8"));
+        fDp->addRow("偏置因子 Gamma:", m_editDpGamma = new QLineEdit("0.1"));
+
+        // 【提高分位数】：确保只有头部的极高亮斑点能免费连线
+        fDp->addRow("背景判决分位数(%):", m_editDpPrctileThresh = new QLineEdit("98.0"));
+
+        // 【提高检出标准差】：从 2.0 提高到 2.5，严卡水面船密集的碎片伪峰
+        fDp->addRow("寻峰提取门限(std倍数):", m_editDpPeakStdMult = new QLineEdit("2.5"));
+        paramLayout->addWidget(gDp);
+
 
     QGroupBox* gDcv = new QGroupBox("高分辨反卷积 (DCV) 设置", paramContainer);
     QFormLayout* fDcv = new QFormLayout(gDcv);
@@ -1433,21 +1446,35 @@ void MainWindow::onOfflineResultsReady(const QList<OfflineTargetResult>& results
         pRaw->xAxis->setRange(res.displayFreqMin, res.displayFreqMax); pRaw->yAxis->setRange(res.minTime, res.maxTime);
         updatePlotOriginalRange(pRaw);
 
-        QCustomPlot* pTpsw = new QCustomPlot(m_lofarWaterfallWidget);
-        pTpsw->setObjectName(QString("offline_tpsw_%1").arg(res.targetId)); // 【新增】：打上对象标识
-        setupPlotInteraction(pTpsw);
-        pTpsw->setMinimumSize(400, 250); m_lofarWaterfallLayout->addWidget(pTpsw, 1, col);
-        pTpsw->plotLayout()->insertRow(0);
-        pTpsw->plotLayout()->addElement(0, 0, new QCPTextElement(pTpsw, QString("目标%1 历史LOFAR谱 (TPSW背景均衡)").arg(res.targetId), QFont("sans", 10, QFont::Bold)));
-        QCPColorMap *cmapTpsw = new QCPColorMap(pTpsw->xAxis, pTpsw->yAxis);
-        cmapTpsw->data()->setSize(res.freqBins, res.timeFrames); cmapTpsw->data()->setRange(QCPRange(0, m_currentConfig.fs/2.0), QCPRange(res.minTime, res.maxTime));
-        double tmax = -999; for(double v : res.tpswLofarDb) if(v > tmax) tmax = v;
-        for(int t=0; t<res.timeFrames; ++t) for(int f=0; f<res.freqBins; ++f) cmapTpsw->data()->setCell(f, t, res.tpswLofarDb[t * res.freqBins + f] - tmax);
-        cmapTpsw->setGradient(QCPColorGradient::gpJet); cmapTpsw->setInterpolate(true);
-        cmapTpsw->setDataRange(QCPRange(-15.0, 0)); cmapTpsw->setTightBoundary(true);
-        pTpsw->xAxis->setLabel("频率/Hz"); pTpsw->yAxis->setLabel("物理时间/s");
-        pTpsw->xAxis->setRange(res.displayFreqMin, res.displayFreqMax); pTpsw->yAxis->setRange(res.minTime, res.maxTime);
-        updatePlotOriginalRange(pTpsw);
+        // 找到 MainWindow::onOfflineResultsReady 中关于 pTpsw 的部分
+                QCustomPlot* pTpsw = new QCustomPlot(m_lofarWaterfallWidget);
+                pTpsw->setObjectName(QString("offline_tpsw_%1").arg(res.targetId));
+                setupPlotInteraction(pTpsw);
+                pTpsw->setMinimumSize(400, 250); m_lofarWaterfallLayout->addWidget(pTpsw, 1, col);
+                pTpsw->plotLayout()->insertRow(0);
+                pTpsw->plotLayout()->addElement(0, 0, new QCPTextElement(pTpsw, QString("目标%1 历史LOFAR谱 (TPSW背景均衡)").arg(res.targetId), QFont("sans", 10, QFont::Bold)));
+                QCPColorMap *cmapTpsw = new QCPColorMap(pTpsw->xAxis, pTpsw->yAxis);
+                cmapTpsw->data()->setSize(res.freqBins, res.timeFrames); cmapTpsw->data()->setRange(QCPRange(0, m_currentConfig.fs/2.0), QCPRange(res.minTime, res.maxTime));
+
+                // ==========================================================
+                // 【核心修改】：抛弃基于 tmax 的相对映射，改用绝对映射！
+                // TPSW 算法的物理意义就是：背景均值为 1.0 (约 0dB)，信号 > 0dB。
+                // 所以我们直接取绝对值，并将阈值卡在 2.0 dB，彻底过滤视觉底噪！
+                // ==========================================================
+                for(int t=0; t<res.timeFrames; ++t) {
+                    for(int f=0; f<res.freqBins; ++f) {
+                        // 直接填入绝对的 TPSW dB 值，不再减去任何 max
+                        cmapTpsw->data()->setCell(f, t, res.tpswLofarDb[t * res.freqBins + f]);
+                    }
+                }
+                cmapTpsw->setGradient(QCPColorGradient::gpJet); cmapTpsw->setInterpolate(true);
+                // 【关键】：下限设为 2.0 dB。意味着只要能量没比周围背景高出 2dB，统统显示为最深的纯蓝色！上限设为 12.0 dB 防爆显。
+                cmapTpsw->setDataRange(QCPRange(2.0, 12.0));
+                cmapTpsw->setTightBoundary(true);
+
+                pTpsw->xAxis->setLabel("频率/Hz"); pTpsw->yAxis->setLabel("物理时间/s");
+                pTpsw->xAxis->setRange(res.displayFreqMin, res.displayFreqMax); pTpsw->yAxis->setRange(res.minTime, res.maxTime);
+                updatePlotOriginalRange(pTpsw);
 
         QCustomPlot* pDp = new QCustomPlot(m_lofarWaterfallWidget);
         pDp->setObjectName(QString("offline_dp_%1").arg(res.targetId)); // 【新增】：打上对象标识
