@@ -165,4 +165,5 @@ private:
         QCustomPlot* m_plotCalcAzimuth;
         QMap<int, QCPGraph*> m_trueAzimuthGraphs;
         QMap<int, QCPGraph*> m_calcAzimuthGraphs;
+        QLabel* m_lblModeIndicator;
 };

@@ -330,8 +330,8 @@ void MainWindow::onStartClicked() {
     m_currentConfig.dpGamma = m_editDpGamma->text().toDouble();
     m_currentConfig.dcvRlIter = m_editDcvRlIter->text().toInt();
     // 【新增】：将 UI 输入的航迹参数赋给全局 Config
-        m_currentConfig.trackAssocGate = m_editTrackAssocGate->text().toDouble();
-        m_currentConfig.trackMHits = m_editTrackMHits->text().toInt();
+    m_currentConfig.trackAssocGate = m_editTrackAssocGate->text().toDouble();
+    m_currentConfig.trackMHits = m_editTrackMHits->text().toInt();
 
     m_btnStart->setEnabled(false); m_btnSelectFiles->setEnabled(false); m_btnManualTruth->setEnabled(false);
     m_btnPauseResume->setEnabled(true); m_btnStop->setEnabled(true);
@@ -374,23 +374,28 @@ void MainWindow::onStartClicked() {
     }
 
     m_worker->setDirectory(m_currentDir);
-        m_worker->setConfig(m_currentConfig);
+    m_worker->setConfig(m_currentConfig);
 
-        // 【新增】：将验证器中解析好的 JSON 真值传给后端 DspWorker
-        const std::vector<TargetTruth>& truths = m_validator->getTruthData();
-        m_worker->setGroundTruths(truths);
+    // 【新增】：将验证器中解析好的 JSON 真值传给后端 DspWorker
+    const std::vector<TargetTruth>& truths = m_validator->getTruthData();
+    m_worker->setGroundTruths(truths);
 
-        // 在 start() 之前加一段日志提示，直接判断 truths 是否为空
-        if (truths.empty()) {
-            m_logConsole->appendPlainText("[系统提示] 未加载先验真值数据，系统进入【实战盲测模式】。Tab4正确率将显示为特征稳定度。");
-        } else {
-            m_logConsole->appendPlainText(QString("[系统提示] 已加载 %1 个先验真值目标，系统进入【算法仿真评估模式】。").arg(truths.size()));
-        }
-
-        // 启动线程 (注意这里只保留一个 start)
-        m_worker->start();
+    // ==============================================================
+    // 【修改】：在 start() 之前加一段日志提示与醒目的模式指示灯切换
+    // ==============================================================
+    if (truths.empty()) {
+        m_lblModeIndicator->setText("🔴 实战盲测模式 (无先验真值)");
+        m_lblModeIndicator->setStyleSheet("background-color: #fdeaea; color: #e74c3c; font-size: 14px; font-weight: bold; border: 1px solid #e74c3c; border-radius: 5px; padding: 6px;");
+        m_logConsole->appendPlainText("[系统提示] 未加载先验真值数据，系统进入【实战盲测模式】。Tab4正确率将显示为特征稳定度。\n");
+    } else {
+        m_lblModeIndicator->setText(QString("🟢 算法仿真评估模式 (真值:%1个)").arg(truths.size()));
+        m_lblModeIndicator->setStyleSheet("background-color: #eafaf1; color: #27ae60; font-size: 14px; font-weight: bold; border: 1px solid #27ae60; border-radius: 5px; padding: 6px;");
+        m_logConsole->appendPlainText(QString("[系统提示] 已加载 %1 个先验真值目标，系统进入【算法仿真评估模式】。\n").arg(truths.size()));
     }
 
+    // 启动线程 (注意这里只保留一个 start)
+    m_worker->start();
+}
 
 void MainWindow::onStopClicked() {
     if (m_worker->isRunning()) {
@@ -862,6 +867,16 @@ void MainWindow::setupUi() {
 
     QGroupBox* groupLog = new QGroupBox("系统状态与终端", rightSidePanel);
     QVBoxLayout* logLayout = new QVBoxLayout(groupLog);
+
+    // ==========================================
+    // 【新增】：模式状态醒目指示灯
+    // ==========================================
+    m_lblModeIndicator = new QLabel("⚪ 当前模式: 待就绪", this);
+    m_lblModeIndicator->setAlignment(Qt::AlignCenter);
+    m_lblModeIndicator->setStyleSheet("background-color: #ecf0f1; color: #7f8c8d; font-size: 14px; font-weight: bold; border: 1px solid #bdc3c7; border-radius: 5px; padding: 6px;");
+    logLayout->addWidget(m_lblModeIndicator);
+    // ==========================================
+
     m_lblSysInfo = new QLabel("引擎初始化完成，参数已就绪。\n等待注入探测数据...");
     m_lblSysInfo->setStyleSheet("color: #333333; font-weight: bold;");
     logLayout->addWidget(m_lblSysInfo);
@@ -1123,8 +1138,6 @@ void MainWindow::setupUi() {
     resize(1600, 1000);
     setWindowTitle("SonarTracker");
 }
-
-
 void MainWindow::onSelectFilesClicked() {
     QString dir = QFileDialog::getExistingDirectory(this, "选择数据根目录", "");
     if (dir.isEmpty()) return;
@@ -1204,8 +1217,15 @@ void MainWindow::onExportClicked() {
         title.replace(QRegularExpression("[\\\\/:*?\"<>|\\n]"), "_");
 
         QString imgPath = plotsDirPath + "/" + title + ".png";
-        int w = plot->width() > 0 ? plot->width() : 800;
-        int h = plot->height() > 0 ? plot->height() : 600;
+
+        // =========================================================
+        // 【修改点】：强制使用弹出独立窗口的默认大尺寸 (800x600)
+        // 采用 std::max 是为了防止：如果全屏时图表比 800x600 还要大，
+        // 就保留更大的极致清晰度；如果被挤压，则底线撑到 800x600。
+        // =========================================================
+        int w = std::max(plot->width(), 800);
+        int h = std::max(plot->height(), 600);
+
         plot->savePng(imgPath, w, h);
     };
 
@@ -1234,8 +1254,12 @@ void MainWindow::onExportClicked() {
 
     saveLayoutPlots(m_sliceLayout, "TargetSlice");
     saveLayoutPlots(m_lofarWaterfallLayout, "OfflineLofar");
+
+    // 【新增】：将 Tab4 仪表盘上的所有图表也全部加入导出名单
     savePlot(m_plotTargetAccuracy, "Dashboard_Target_Accuracy");
     savePlot(m_plotBatchAccuracy, "Dashboard_Batch_Trend");
+    if (m_plotTrueAzimuth) savePlot(m_plotTrueAzimuth, "Dashboard_TrueAzimuth_Trend");
+    if (m_plotCalcAzimuth) savePlot(m_plotCalcAzimuth, "Dashboard_CalcAzimuth_Trend");
 
     if (m_tableTargetFeatures) {
         m_tableTargetFeatures->grab().save(plotsDirPath + "/Dashboard_1_Table.png");
@@ -1261,9 +1285,8 @@ void MainWindow::onExportClicked() {
     appendLog(QString(">> 成功：所有配套图表已导出至文件夹 %1\n").arg(plotsDirPath));
 
     QMessageBox::information(this, "导出成功",
-                             QString("综合评估报表及运行日志已成功导出！\n\n此外，当前所有图表及面板也已自动保存为图片，位于同级配套目录：\n%1").arg(plotsDirPath));
+                             QString("综合评估报表及运行日志已成功导出！\n\n此外，当前所有图表及面板也已自动高分辨率保存为图片，位于同级配套目录：\n%1").arg(plotsDirPath));
 }
-
 void MainWindow::createTargetPlots(int targetId) {
     QCustomPlot* lsPlot = new QCustomPlot(this);
     setupPlotInteraction(lsPlot);
@@ -1431,7 +1454,7 @@ void MainWindow::onOfflineResultsReady(const QList<OfflineTargetResult>& results
     int col = 0;
     for (const auto& res : results) {
         QCustomPlot* pRaw = new QCustomPlot(m_lofarWaterfallWidget);
-        pRaw->setObjectName(QString("offline_raw_%1").arg(res.targetId)); // 【新增】：打上对象标识
+        pRaw->setObjectName(QString("offline_raw_%1").arg(res.targetId));
         setupPlotInteraction(pRaw);
         pRaw->setMinimumSize(400, 250); m_lofarWaterfallLayout->addWidget(pRaw, 0, col);
         pRaw->plotLayout()->insertRow(0);
@@ -1446,38 +1469,36 @@ void MainWindow::onOfflineResultsReady(const QList<OfflineTargetResult>& results
         pRaw->xAxis->setRange(res.displayFreqMin, res.displayFreqMax); pRaw->yAxis->setRange(res.minTime, res.maxTime);
         updatePlotOriginalRange(pRaw);
 
-        // 找到 MainWindow::onOfflineResultsReady 中关于 pTpsw 的部分
-                QCustomPlot* pTpsw = new QCustomPlot(m_lofarWaterfallWidget);
-                pTpsw->setObjectName(QString("offline_tpsw_%1").arg(res.targetId));
-                setupPlotInteraction(pTpsw);
-                pTpsw->setMinimumSize(400, 250); m_lofarWaterfallLayout->addWidget(pTpsw, 1, col);
-                pTpsw->plotLayout()->insertRow(0);
-                pTpsw->plotLayout()->addElement(0, 0, new QCPTextElement(pTpsw, QString("目标%1 历史LOFAR谱 (TPSW背景均衡)").arg(res.targetId), QFont("sans", 10, QFont::Bold)));
-                QCPColorMap *cmapTpsw = new QCPColorMap(pTpsw->xAxis, pTpsw->yAxis);
-                cmapTpsw->data()->setSize(res.freqBins, res.timeFrames); cmapTpsw->data()->setRange(QCPRange(0, m_currentConfig.fs/2.0), QCPRange(res.minTime, res.maxTime));
+        QCustomPlot* pTpsw = new QCustomPlot(m_lofarWaterfallWidget);
+        pTpsw->setObjectName(QString("offline_tpsw_%1").arg(res.targetId));
+        setupPlotInteraction(pTpsw);
+        pTpsw->setMinimumSize(400, 250); m_lofarWaterfallLayout->addWidget(pTpsw, 1, col);
+        pTpsw->plotLayout()->insertRow(0);
+        pTpsw->plotLayout()->addElement(0, 0, new QCPTextElement(pTpsw, QString("目标%1 历史LOFAR谱 (TPSW背景均衡)").arg(res.targetId), QFont("sans", 10, QFont::Bold)));
+        QCPColorMap *cmapTpsw = new QCPColorMap(pTpsw->xAxis, pTpsw->yAxis);
+        cmapTpsw->data()->setSize(res.freqBins, res.timeFrames); cmapTpsw->data()->setRange(QCPRange(0, m_currentConfig.fs/2.0), QCPRange(res.minTime, res.maxTime));
 
-                // ==========================================================
-                // 【核心修改】：抛弃基于 tmax 的相对映射，改用绝对映射！
-                // TPSW 算法的物理意义就是：背景均值为 1.0 (约 0dB)，信号 > 0dB。
-                // 所以我们直接取绝对值，并将阈值卡在 2.0 dB，彻底过滤视觉底噪！
-                // ==========================================================
-                for(int t=0; t<res.timeFrames; ++t) {
-                    for(int f=0; f<res.freqBins; ++f) {
-                        // 直接填入绝对的 TPSW dB 值，不再减去任何 max
-                        cmapTpsw->data()->setCell(f, t, res.tpswLofarDb[t * res.freqBins + f]);
-                    }
-                }
-                cmapTpsw->setGradient(QCPColorGradient::gpJet); cmapTpsw->setInterpolate(true);
-                // 【关键】：下限设为 2.0 dB。意味着只要能量没比周围背景高出 2dB，统统显示为最深的纯蓝色！上限设为 12.0 dB 防爆显。
-                cmapTpsw->setDataRange(QCPRange(2.0, 12.0));
-                cmapTpsw->setTightBoundary(true);
+        double tpswMaxVal = -9999.0;
+        for(int t=0; t<res.timeFrames; ++t) {
+            for(int f=0; f<res.freqBins; ++f) {
+                double val = res.tpswLofarDb[t * res.freqBins + f];
+                cmapTpsw->data()->setCell(f, t, val);
+                if (val > tpswMaxVal) tpswMaxVal = val;
+            }
+        }
+        cmapTpsw->setGradient(QCPColorGradient::gpJet); cmapTpsw->setInterpolate(true);
 
-                pTpsw->xAxis->setLabel("频率/Hz"); pTpsw->yAxis->setLabel("物理时间/s");
-                pTpsw->xAxis->setRange(res.displayFreqMin, res.displayFreqMax); pTpsw->yAxis->setRange(res.minTime, res.maxTime);
-                updatePlotOriginalRange(pTpsw);
+        double lowerBound = (tpswMaxVal > 15.0) ? (tpswMaxVal - 10.0) : 3.0;
+
+        cmapTpsw->setDataRange(QCPRange(lowerBound, tpswMaxVal));
+        cmapTpsw->setTightBoundary(true);
+
+        pTpsw->xAxis->setLabel("频率/Hz"); pTpsw->yAxis->setLabel("物理时间/s");
+        pTpsw->xAxis->setRange(res.displayFreqMin, res.displayFreqMax); pTpsw->yAxis->setRange(res.minTime, res.maxTime);
+        updatePlotOriginalRange(pTpsw);
 
         QCustomPlot* pDp = new QCustomPlot(m_lofarWaterfallWidget);
-        pDp->setObjectName(QString("offline_dp_%1").arg(res.targetId)); // 【新增】：打上对象标识
+        pDp->setObjectName(QString("offline_dp_%1").arg(res.targetId));
         setupPlotInteraction(pDp);
         pDp->setMinimumSize(400, 250); m_lofarWaterfallLayout->addWidget(pDp, 2, col);
         pDp->plotLayout()->insertRow(0);
@@ -1485,8 +1506,16 @@ void MainWindow::onOfflineResultsReady(const QList<OfflineTargetResult>& results
         QCPColorMap *cmapDp = new QCPColorMap(pDp->xAxis, pDp->yAxis);
         cmapDp->data()->setSize(res.freqBins, res.timeFrames); cmapDp->data()->setRange(QCPRange(0, m_currentConfig.fs/2.0), QCPRange(res.minTime, res.maxTime));
         for(int t=0; t<res.timeFrames; ++t) for(int f=0; f<res.freqBins; ++f) cmapDp->data()->setCell(f, t, res.dpCounter[t * res.freqBins + f]);
-        cmapDp->setGradient(QCPColorGradient::gpJet); cmapDp->setInterpolate(false);
-        cmapDp->setDataRange(QCPRange(0, 10)); cmapDp->setTightBoundary(true);
+
+        // ==========================================================
+        // 【优化四】：强行开启双线性插值！搭配上方传来的 500 超高能量，
+        // 将在降采样时完美融合为一根显眼的连续红线！
+        // ==========================================================
+        cmapDp->setGradient(QCPColorGradient::gpJet);
+        cmapDp->setInterpolate(true);  // 这里由 false 改为了 true！
+        cmapDp->setDataRange(QCPRange(0, 10));
+        cmapDp->setTightBoundary(true);
+
         pDp->xAxis->setLabel("频率/Hz"); pDp->yAxis->setLabel("物理时间/s");
         pDp->xAxis->setRange(res.displayFreqMin, res.displayFreqMax); pDp->yAxis->setRange(res.minTime, res.maxTime);
         updatePlotOriginalRange(pDp);

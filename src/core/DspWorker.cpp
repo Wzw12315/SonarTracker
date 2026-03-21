@@ -845,7 +845,6 @@ void DspWorker::run() {
                         if (tr.id == tid) {
                             tHistory.push_back(tr.lofarFullLinear);
                             if (startAng < 0 && tr.isActive) startAng = tr.currentAngle;
-                            // 【意见四】：使用 DCV 高分辨线谱池去定位频域包裹宽度
                             if (tr.isActive && !tr.lineSpectraDcv.empty()) {
                                 for(double f_line : tr.lineSpectraDcv) {
                                     if(f_line < minFoundFreq) minFoundFreq = f_line;
@@ -868,11 +867,9 @@ void DspWorker::run() {
                 Eigen::MatrixXd Z_TPSW;
                 Eigen::MatrixXi counter;
 
-                // 找到 src/core/DspWorker.cpp 大约 466 行，修改 detect_line_spectrum_from_lofar_change 的调用：
-                                detect_line_spectrum_from_lofar_change(lofar_mat, fs, NFFT_R, center_freq, Z_TPSW, counter, f_stft, t_stft,
-                                                                       m_config.tpswG, m_config.tpswE, m_config.tpswC, m_config.dpL,
-                                                                       m_config.dpAlpha, m_config.dpBeta, m_config.dpGamma,
-                                                                       m_config.dpPrctileThresh, m_config.dpPeakStdMult); // 【新增最后两个参数】
+                detect_line_spectrum_from_lofar_change(lofar_mat, fs, NFFT_R, center_freq, Z_TPSW, counter, f_stft, t_stft,
+                                                       m_config.tpswG, m_config.tpswE, m_config.tpswC, m_config.dpL, m_config.dpAlpha, m_config.dpBeta, m_config.dpGamma);
+
                 OfflineTargetResult offRes;
                 offRes.targetId = tid;
                 offRes.startAngle = startAng;
@@ -882,13 +879,12 @@ void DspWorker::run() {
                 offRes.maxTime = history_frames.back().timestamp;
                 if (std::abs(offRes.maxTime - offRes.minTime) < 0.1) offRes.maxTime += 3.0;
 
-                // 基于探测出的最左与最右 DCV 线谱特征频点，加上下各 5 Hz 裕度来框选显示轴界
                 if (minFoundFreq > maxFoundFreq) {
                     offRes.displayFreqMin = m_config.lofarMin;
                     offRes.displayFreqMax = m_config.lofarMax;
                 } else {
-                    offRes.displayFreqMin = std::max(0.0, minFoundFreq - 5.0);
-                    offRes.displayFreqMax = std::min(fs / 2.0, maxFoundFreq + 5.0);
+                    offRes.displayFreqMin = std::max(0.0, minFoundFreq - 15.0);
+                    offRes.displayFreqMax = std::min(fs / 2.0, maxFoundFreq + 15.0);
                 }
 
                 offRes.rawLofarDb.resize(M_time * half_fft);
@@ -900,7 +896,12 @@ void DspWorker::run() {
                         int idx = r * half_fft + c;
                         offRes.rawLofarDb[idx] = 10.0 * log10(lofar_mat(r, c) + 1e-12);
                         offRes.tpswLofarDb[idx] = 10.0 * log10(Z_TPSW(r, c) + 1e-12);
-                        offRes.dpCounter[idx] = (counter(c, r) > 0) ? 10.0 : 0.0;
+
+                        // ==========================================================
+                        // 【优化三】：注入极其夸张的 500.0 超高能量！
+                        // 这是对抗 QCustomPlot 大尺寸降采样的终极杀招
+                        // ==========================================================
+                        offRes.dpCounter[idx] = (counter(c, r) > 0) ? 500.0 : 0.0;
                     }
                 }
                 offResults.append(offRes);

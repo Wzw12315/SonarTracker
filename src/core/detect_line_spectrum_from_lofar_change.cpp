@@ -222,19 +222,13 @@ void detect_line_spectrum_from_lofar_change(
     int M_stft = Pxx_linear.rows();
     int N_stft = Pxx_linear.cols();
 
-    // =========================================================================
-    // 【核心修复 1】：引入物理 SNR 底线，阻断 DP 在纯白噪声中强行连线
-    // 纯背景噪声均值在 1.0 左右。如果按百分比取的门限过低，强制拉高至 1.5(约1.76dB)
-    // 这样能确保只有真正脱颖而出的能量斑才能进入 DP 连线池，彻底消灭满屏假红线。
-    // =========================================================================
-    double prctile_val = prctile(Pxx_linear, prctile_thresh);
-    double thresh_break = std::max(prctile_val, 1.5);
-
+    double thresh_break = prctile(Pxx_linear, prctile_thresh);
     int win_freq_len = L;
 
     RowVectorXd phi_f, f_window_start, max_phi_window_all;
     int num_windows;
     MatrixXd path_m_all;
+
     calc_spectrum_feature(Pxx_linear, f_stft, N_stft, win_freq_len, thresh_break,
                           alpha, beta, gamma, fs,
                           phi_f, f_window_start, num_windows, path_m_all, max_phi_window_all);
@@ -250,16 +244,12 @@ void detect_line_spectrum_from_lofar_change(
         }
     }
 
-    // 按振幅降序，进行 NMS 极大值抑制
-    std::sort(all_peaks.begin(), all_peaks.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::sort(all_peaks.begin(), all_peaks.end(), [](const std::pair<double, int>& a, const std::pair<double, int>& b) {
+        return a.first > b.first;
+    });
 
     std::vector<int> valid_win_idx;
-
-    // =========================================================================
-    // 【核心修复 2】：扩大极大值抑制距离 (Non-Maximum Suppression)
-    // 水面舰船宽带起伏容易在附近产生多个碎裂的假峰，扩大到 24 (约4Hz带宽) 进行融合过滤
-    // =========================================================================
-    int minPeakDist = 24;
+    int minPeakDist = 8;
     for (const auto& p : all_peaks) {
         bool ok = true;
         for (int vp : valid_win_idx) {
@@ -271,18 +261,36 @@ void detect_line_spectrum_from_lofar_change(
 
     counter = MatrixXi::Zero(M_stft, N_stft);
 
-    // 仅置中心点为 1，确保线谱为单像素，不膨胀
+    // ==========================================================
+    // 【优化一】：引入 7 帧中值滤波，抹平 DP 轨迹偶然的噪声错位跳跃
+    // 【优化二】：设线宽为 ±1 (3像素)，兼顾缩小的可见性与放大的精细感
+    // ==========================================================
     for (int win_idx_cpp : valid_win_idx) {
         RowVectorXd path_m_mat = path_m_all.row(win_idx_cpp);
+
+        std::vector<int> smoothed_path(N_stft);
+        int med_win = 7;
+        for (int t = 0; t < N_stft; ++t) {
+            std::vector<int> local_path;
+            for (int dt = -med_win/2; dt <= med_win/2; ++dt) {
+                int safe_t = std::max(0, std::min(N_stft - 1, t + dt));
+                local_path.push_back(static_cast<int>(path_m_mat(safe_t)));
+            }
+            std::sort(local_path.begin(), local_path.end());
+            int median_offset = local_path[local_path.size() / 2];
+            smoothed_path[t] = win_idx_cpp + median_offset - 1;
+        }
+
         for (int t_cpp = 0; t_cpp < N_stft; ++t_cpp) {
-            int global_freq_idx_cpp = win_idx_cpp + static_cast<int>(path_m_mat(t_cpp)) - 1;
-            int safe_idx = max(0, min(M_stft - 1, global_freq_idx_cpp));
-            counter(safe_idx, t_cpp) = 1;
+            int global_freq_idx_cpp = smoothed_path[t_cpp];
+            for (int w = -1; w <= 1; ++w) {
+                int safe_idx = std::max(0, std::min(M_stft - 1, global_freq_idx_cpp + w));
+                counter(safe_idx, t_cpp) = 1;
+            }
         }
     }
 
-    // 提取候选点列表
-    vector<pair<int, int>> candidate_idx;
+    std::vector<std::pair<int, int>> candidate_idx;
     for (int freq_idx_cpp = 0; freq_idx_cpp < M_stft; ++freq_idx_cpp) {
         for (int time_idx_cpp = 0; time_idx_cpp < N_stft; ++time_idx_cpp) {
             if (counter(freq_idx_cpp, time_idx_cpp) > 0) {
@@ -296,33 +304,35 @@ void detect_line_spectrum_from_lofar_change(
 
     double freq_res = (fs / 2.0) / (static_cast<double>(N_freq) - 1.0);
     VectorXd f_candidate(candidate_idx.size());
-    for (int i = 0; i < candidate_idx.size(); ++i) {
-        f_candidate(i) = static_cast<double>(candidate_idx[i].first) * freq_res;
+    for (size_t i = 0; i < candidate_idx.size(); ++i) {
+        f_candidate(i) = candidate_idx[i].first * freq_res;
     }
 
-    sort(f_candidate.begin(), f_candidate.end());
-    vector<vector<double>> groups;
-    vector<double> current_group;
-    if (f_candidate.size() > 0) current_group.push_back(f_candidate(0));
+    std::vector<double> valid_lines;
+    std::vector<double> current_group;
+    double current_val = f_candidate(0);
+    current_group.push_back(current_val);
 
-    double group_thresh = freq_res * 3.0;
-    for (int i = 1; i < f_candidate.size(); ++i) {
-        if (f_candidate(i) - f_candidate(i-1) < group_thresh) {
+    for (size_t i = 1; i < f_candidate.size(); ++i) {
+        if (f_candidate(i) - current_val < 3.0) {
             current_group.push_back(f_candidate(i));
         } else {
-            groups.push_back(current_group);
+            std::sort(current_group.begin(), current_group.end());
+            double median_val = current_group[current_group.size() / 2];
+            valid_lines.push_back(median_val);
             current_group.clear();
             current_group.push_back(f_candidate(i));
         }
+        current_val = f_candidate(i);
     }
-    if (current_group.size() > 0) groups.push_back(current_group);
+    if (!current_group.empty()) {
+        std::sort(current_group.begin(), current_group.end());
+        double median_val = current_group[current_group.size() / 2];
+        valid_lines.push_back(median_val);
+    }
 
-    line_spectrum_center_freq = RowVectorXd::Zero(groups.size());
-    for (int g = 0; g < groups.size(); ++g) {
-        double group_mean = 0.0;
-        for (double freq : groups[g]) group_mean += freq;
-        group_mean /= groups[g].size();
-        line_spectrum_center_freq(g) = group_mean;
+    line_spectrum_center_freq.resize(valid_lines.size());
+    for (size_t i = 0; i < valid_lines.size(); ++i) {
+        line_spectrum_center_freq(i) = valid_lines[i];
     }
-    sort(line_spectrum_center_freq.data(), line_spectrum_center_freq.data() + line_spectrum_center_freq.size());
 }
