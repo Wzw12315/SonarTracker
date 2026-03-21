@@ -4,7 +4,7 @@
 #include <atomic>
 #include "DataTypes.h"
 #include "detect_line_spectrum_from_lofar_change.h"
-
+#include <QMutex>
 class DspWorker : public QThread {
     Q_OBJECT
 public:
@@ -19,7 +19,7 @@ public:
     void pause();
     void resume();
     bool isPaused() const { return m_isPaused; }
-
+void requestRemoveTarget(int targetId);
 signals:
     void frameProcessed(const FrameResult& result);
     void logReady(const QString& log);
@@ -40,5 +40,6 @@ private:
     std::atomic<bool> m_isPaused;
     // 【新增】：存储先验真值
         std::vector<TargetTruth> m_groundTruths;
-
+        QMutex m_removeMutex;
+        QList<int> m_targetsToRemove;
 };

@@ -104,3 +104,13 @@ QList<TargetTrack> TrackManager::updateTracks(const std::vector<double>& detecte
 
     return m_tracks;
 }
+
+
+void TrackManager::removeTrackById(int targetId) {
+    // 逆序遍历，安全删除指定 ID 的航迹，杜绝其继续参与后续帧的关联更新
+    for (int t = m_tracks.size() - 1; t >= 0; --t) {
+        if (m_tracks[t].id == targetId) {
+            m_tracks.removeAt(t);
+        }
+    }
+}

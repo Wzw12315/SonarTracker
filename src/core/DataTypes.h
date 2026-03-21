@@ -139,6 +139,13 @@ struct TargetEvaluation {
     // [新增] 累积DCV专属评估结果
     QString lineSpectraStrDcv;
     double accuracyDcv = 0.0;
+
+    // [新增] 真实和解算方位历程跟踪
+    bool hasTruth = false;
+    double initialTrueAngle = 0.0;
+    double currentTrueAngle = 0.0;
+    double initialCalcAngle = 0.0;
+    double currentCalcAngle = 0.0;
 };
 Q_DECLARE_METATYPE(TargetEvaluation)
 

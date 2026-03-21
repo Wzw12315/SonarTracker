@@ -49,7 +49,7 @@ private slots:
     void onPauseResumeClicked();
     void onStopClicked();
     void onExportClicked();
-
+        void onDeleteTargetClicked();
     void onFrameProcessed(const FrameResult& result);
     void appendLog(const QString& log);
     void appendReport(const QString& report);
@@ -156,4 +156,7 @@ private:
     QCustomPlot* m_plotTargetAccuracy;
     QCustomPlot* m_plotBatchAccuracy;
     QCPBars* m_accuracyBars;
+
+    QLineEdit* m_editDeleteTargetId;
+    QPushButton* m_btnDeleteTarget;
 };

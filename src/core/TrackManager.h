@@ -19,6 +19,8 @@ public:
         M_HITS = mHits;
     }
 
+    void removeTrackById(int targetId);
+
 private:
     double ASSOCIATION_GATE = 6.0; // 关联波门阈值
     int M_HITS = 10;               // M/N 逻辑，累积命中判定真目标
