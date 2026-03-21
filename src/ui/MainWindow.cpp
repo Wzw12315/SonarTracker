@@ -382,7 +382,7 @@ void MainWindow::onProcessingFinished() {
     m_btnStart->setEnabled(true); m_btnSelectFiles->setEnabled(true); m_btnManualTruth->setEnabled(true); // 【更新】解除禁用
     m_btnPauseResume->setEnabled(false); m_btnStop->setEnabled(false);
 
-    updateTab2Plots();
+//    updateTab2Plots();
 }
 MainWindow::~MainWindow() {
     m_worker->stop();
@@ -831,7 +831,7 @@ void MainWindow::setupUi() {
 
     tab2Scroll->setWidget(tab2Container);
     tab2MainLayout->addWidget(tab2Scroll);
-    m_mainTabWidget->addTab(tab2, "后处理: 空间方位谱全景与切片");
+    m_mainTabWidget->addTab(tab2, "实时处理: 空间方位谱全景与切片");
 
     // ================== TAB 3 ==================
     QWidget* tab3 = new QWidget();
@@ -1143,7 +1143,7 @@ void MainWindow::onFrameProcessed(const FrameResult& result) {
 
     m_spatialPlot->graph(0)->setData(result.thetaAxis, result.cbfData);
     m_spatialPlot->graph(1)->setData(result.thetaAxis, result.dcvData);
-    m_plotTitle->setText(QString("宽带空间谱实时折线图 (第%1帧 | 时间: %2s)").arg(result.frameIndex).arg(result.timestamp));
+    m_plotTitle->setText(QString("宽带实时折线图 (第%1帧 | 时间: %2s)").arg(result.frameIndex).arg(result.timestamp));
     m_spatialPlot->replot();
     updatePlotOriginalRange(m_spatialPlot);
 
@@ -1199,6 +1199,8 @@ void MainWindow::onFrameProcessed(const FrameResult& result) {
         updatePlotOriginalRange(lp);
         updatePlotOriginalRange(dp);
     }
+    // 【新增】：强制每帧实时刷新 Tab 2 的空间谱和瀑布图
+        updateTab2Plots();
 }
 
 void MainWindow::appendLog(const QString& log) { m_logConsole->appendPlainText(log); m_logConsole->moveCursor(QTextCursor::End); }
@@ -1322,7 +1324,7 @@ void MainWindow::onOfflineResultsReady(const QList<OfflineTargetResult>& results
         col++;
     }
 
-    updateTab2Plots();
+//    updateTab2Plots();
 }
 
 void MainWindow::updateTab2Plots() {
@@ -1332,12 +1334,18 @@ void MainWindow::updateTab2Plots() {
     double max_time = m_historyResults.last().timestamp;
     if (std::abs(max_time - min_time) < 0.1) max_time = min_time + 3.0;
 
-    m_cbfWaterfallPlot->clearPlottables();
-    m_dcvWaterfallPlot->clearPlottables();
-
+    // ==============================================================
+    // 1. 瀑布图：复用现有的 QCPColorMap，避免 clearPlottables 导致闪烁
+    // ==============================================================
     int nx_uniform = 361;
-    QCPColorMap *cmapCbf = new QCPColorMap(m_cbfWaterfallPlot->xAxis, m_cbfWaterfallPlot->yAxis);
-    QCPColorMap *cmapDcv = new QCPColorMap(m_dcvWaterfallPlot->xAxis, m_dcvWaterfallPlot->yAxis);
+
+    QCPColorMap *cmapCbf = nullptr;
+    if (m_cbfWaterfallPlot->plottableCount() > 0) cmapCbf = qobject_cast<QCPColorMap*>(m_cbfWaterfallPlot->plottable(0));
+    if (!cmapCbf) cmapCbf = new QCPColorMap(m_cbfWaterfallPlot->xAxis, m_cbfWaterfallPlot->yAxis);
+
+    QCPColorMap *cmapDcv = nullptr;
+    if (m_dcvWaterfallPlot->plottableCount() > 0) cmapDcv = qobject_cast<QCPColorMap*>(m_dcvWaterfallPlot->plottable(0));
+    if (!cmapDcv) cmapDcv = new QCPColorMap(m_dcvWaterfallPlot->xAxis, m_dcvWaterfallPlot->yAxis);
 
     cmapCbf->data()->setSize(nx_uniform, num_frames);
     cmapCbf->data()->setRange(QCPRange(0, 180), QCPRange(min_time, max_time));
@@ -1404,13 +1412,9 @@ void MainWindow::updateTab2Plots() {
     m_dcvWaterfallPlot->replot();
     updatePlotOriginalRange(m_dcvWaterfallPlot);
 
-    closePopupsFromLayout(m_sliceLayout);
-    QLayoutItem* item;
-    while ((item = m_sliceLayout->takeAt(0)) != nullptr) {
-        if (item->widget()) delete item->widget();
-        delete item;
-    }
-
+    // ==============================================================
+    // 2. 切片图：使用 objectName 动态复用 QCustomPlot 组件，彻底解决实时刷新的严重闪烁
+    // ==============================================================
     QSet<int> targetIds;
     for (const auto& frame : m_historyResults) {
         for (const auto& tr : frame.tracks) {
@@ -1420,6 +1424,19 @@ void MainWindow::updateTab2Plots() {
 
     QList<int> sortedIds = targetIds.values();
     std::sort(sortedIds.begin(), sortedIds.end());
+
+    // 清理那些已经丢失/消失目标的旧图表
+    QList<QCustomPlot*> allPlots = m_sliceWidget->findChildren<QCustomPlot*>();
+    for (QCustomPlot* plot : allPlots) {
+        QString objName = plot->objectName();
+        if (objName.startsWith("slice_")) {
+            int plotTid = objName.split("_").last().toInt();
+            if (!targetIds.contains(plotTid)) {
+                m_sliceLayout->removeWidget(plot);
+                plot->deleteLater();
+            }
+        }
+    }
 
     int col = 0;
     for (int tid : sortedIds) {
@@ -1467,51 +1484,68 @@ void MainWindow::updateTab2Plots() {
             double df_calc = (v_dcv.size() > 1) ? (m_currentConfig.fs / 2.0) / (v_dcv.size() - 1) : 1.0;
             for(int i=0; i<v_dcv.size(); ++i) {
                 f_axis[i] = i * df_calc;
-
-                // 【修复】：移除了原来对 CBF 附加的 target_suppression_ratio 惩罚系数，还原其真实分贝值
                 double d_val = 10.0 * std::log10(v_dcv[i] / (max_dcv + 1e-12) + 1e-12);
                 double c_val = 10.0 * std::log10(v_cbf[i] / (max_cbf + 1e-12) + 1e-12);
-
                 dcv_db[i] = std::max(-80.0, d_val);
                 cbf_db[i] = std::max(-80.0, c_val);
             }
 
-            // 绘制 CBF
-            QCustomPlot* pCbf = new QCustomPlot(m_sliceWidget);
-            setupPlotInteraction(pCbf);
-            pCbf->setMinimumSize(400, 250);
-            pCbf->addGraph(); pCbf->graph(0)->setPen(QPen(Qt::gray, 2.0));
+            // --- 动态获取或创建 CBF Plot ---
+            QString cbfName = QString("slice_cbf_%1").arg(tid);
+            QCustomPlot* pCbf = m_sliceWidget->findChild<QCustomPlot*>(cbfName);
+            if (!pCbf) {
+                pCbf = new QCustomPlot(m_sliceWidget);
+                pCbf->setObjectName(cbfName);
+                setupPlotInteraction(pCbf);
+                pCbf->setMinimumSize(400, 250);
+                pCbf->addGraph(); pCbf->graph(0)->setPen(QPen(Qt::gray, 2.0));
+                pCbf->plotLayout()->insertRow(0);
+                pCbf->plotLayout()->addElement(0, 0, new QCPTextElement(pCbf, "", QFont("sans", 10, QFont::Bold)));
+                pCbf->xAxis->setRange(m_currentConfig.lofarMin, m_currentConfig.lofarMax);
+                pCbf->yAxis->setRange(-80, 5);
+                pCbf->xAxis->setVisible(false);
+                m_sliceLayout->addWidget(pCbf, 0, col);
+            }
+
             pCbf->graph(0)->setData(f_axis, cbf_db);
-            pCbf->plotLayout()->insertRow(0);
-            pCbf->plotLayout()->addElement(0, 0, new QCPTextElement(pCbf, QString("目标%1 (约 %2°) - CBF").arg(tid).arg(avg_ang, 0, 'f', 1), QFont("sans", 10, QFont::Bold)));
-            pCbf->xAxis->setRange(m_currentConfig.lofarMin, m_currentConfig.lofarMax);
-            pCbf->yAxis->setRange(-80, 5);
+            if (auto* title = qobject_cast<QCPTextElement*>(pCbf->plotLayout()->element(0, 0))) {
+                title->setText(QString("目标%1 (约 %2°) - CBF").arg(tid).arg(avg_ang, 0, 'f', 1));
+            }
             if (col == 0) pCbf->yAxis->setLabel("相对功率 / dB");
-            pCbf->xAxis->setVisible(false);
-            m_sliceLayout->addWidget(pCbf, 0, col);
+            else pCbf->yAxis->setLabel("");
+            pCbf->replot();
             updatePlotOriginalRange(pCbf);
 
-            // 绘制 DCV
-            QCustomPlot* pDcv = new QCustomPlot(m_sliceWidget);
-            setupPlotInteraction(pDcv);
-            pDcv->setMinimumSize(400, 250);
-            pDcv->addGraph(); pDcv->graph(0)->setPen(QPen(Qt::red, 1.5));
+            // --- 动态获取或创建 DCV Plot ---
+            QString dcvName = QString("slice_dcv_%1").arg(tid);
+            QCustomPlot* pDcv = m_sliceWidget->findChild<QCustomPlot*>(dcvName);
+            if (!pDcv) {
+                pDcv = new QCustomPlot(m_sliceWidget);
+                pDcv->setObjectName(dcvName);
+                setupPlotInteraction(pDcv);
+                pDcv->setMinimumSize(400, 250);
+                pDcv->addGraph(); pDcv->graph(0)->setPen(QPen(Qt::red, 1.5));
+                pDcv->plotLayout()->insertRow(0);
+                pDcv->plotLayout()->addElement(0, 0, new QCPTextElement(pDcv, "", QFont("sans", 10, QFont::Bold)));
+                pDcv->xAxis->setRange(m_currentConfig.lofarMin, m_currentConfig.lofarMax);
+                pDcv->yAxis->setRange(-80, 5);
+                pDcv->xAxis->setLabel("频率 / Hz");
+                m_sliceLayout->addWidget(pDcv, 1, col);
+            }
+
             pDcv->graph(0)->setData(f_axis, dcv_db);
-            pDcv->plotLayout()->insertRow(0);
-            pDcv->plotLayout()->addElement(0, 0, new QCPTextElement(pDcv, QString("目标%1 (约 %2°) - DCV").arg(tid).arg(avg_ang, 0, 'f', 1), QFont("sans", 10, QFont::Bold)));
-            pDcv->xAxis->setRange(m_currentConfig.lofarMin, m_currentConfig.lofarMax);
-            pDcv->yAxis->setRange(-80, 5);
-            pDcv->xAxis->setLabel("频率 / Hz");
+            if (auto* title = qobject_cast<QCPTextElement*>(pDcv->plotLayout()->element(0, 0))) {
+                title->setText(QString("目标%1 (约 %2°) - DCV").arg(tid).arg(avg_ang, 0, 'f', 1));
+            }
             if (col == 0) pDcv->yAxis->setLabel("相对功率 / dB");
-            m_sliceLayout->addWidget(pDcv, 1, col);
+            else pDcv->yAxis->setLabel("");
+            pDcv->replot();
             updatePlotOriginalRange(pDcv);
 
             col++;
         }
     }
 }
-
-
 void MainWindow::onBatchAccuracyComputed(int batchIndex, double accuracy) {
     m_batchAccuracies.append(qMakePair(batchIndex, accuracy));
 
