@@ -1,0 +1,57 @@
+{
+    "targets": [
+        {
+            "course": 45,
+            "id": 1,
+            "initialAngle": 60,
+            "initialDistance": 20000,
+            "name": "目标1",
+            "speed": 4,
+            "trueDemonFreq": 2.1,
+            "trueLofarFreqs": [
+                125
+            ]
+        },
+        {
+            "course": 80,
+            "id": 2,
+            "initialAngle": 80,
+            "initialDistance": 20000,
+            "name": "目标2",
+            "speed": 5,
+            "trueDemonFreq": 2.8,
+            "trueLofarFreqs": [
+                112
+            ]
+        },
+        {
+            "course": 85,
+            "id": 3,
+            "initialAngle": 88.2,
+            "initialDistance": 20000,
+            "name": "目标3",
+            "speed": 8,
+            "trueDemonFreq": 4.2,
+            "trueLofarFreqs": [
+                120,
+                180,
+                240
+            ]
+        },
+        {
+            "course": 95,
+            "id": 4,
+            "initialAngle": 90,
+            "initialDistance": 20000,
+            "name": "目标4",
+            "speed": 7,
+            "trueDemonFreq": 5.5,
+            "trueLofarFreqs": [
+                135,
+                180,
+                225,
+                270
+            ]
+        }
+    ]
+}
